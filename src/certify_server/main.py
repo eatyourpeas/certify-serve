@@ -1,6 +1,5 @@
 import io
 import csv
-import base64
 import zipfile
 import importlib
 import inspect
@@ -12,8 +11,9 @@ import os
 from email.message import EmailMessage
 from typing import List, Dict, Tuple, Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 import time
 from pathlib import Path
 from datetime import datetime
@@ -23,6 +23,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 
 # Security: simple headers middleware
@@ -113,7 +114,38 @@ app = FastAPI(
     docs_url="/swagger",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
+    swagger_ui_parameters={"favicon_href": "/site/icons/favicon.svg"},
 )
+
+# If a `site` directory exists (e.g. during local dev or when bundled into the image),
+# expose it at `/site` so the Swagger UI can load the custom favicon and other assets.
+site_dir = Path(__file__).resolve().parents[2] / "site"
+if site_dir.exists():
+    app.mount("/site", StaticFiles(directory=str(site_dir)), name="site")
+else:
+    logging.getLogger(__name__).debug(
+        "site directory not found; static assets not mounted: %s", site_dir
+    )
+
+
+# Serve a root favicon so browsers reliably show the tab icon.
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    svg_path = site_dir / "icons" / "favicon.svg"
+    if svg_path.exists():
+        return FileResponse(svg_path, media_type="image/svg+xml")
+    raise HTTPException(status_code=404, detail="favicon not found")
+
+
+# Proxy common PNG favicon requests to the SVG so browsers and Swagger UI resolve an icon
+@app.get("/favicon.png", include_in_schema=False)
+@app.get("/favicon-32x32.png", include_in_schema=False)
+@app.get("/favicon-16x16.png", include_in_schema=False)
+def favicon_png():
+    svg_path = site_dir / "icons" / "favicon.svg"
+    if svg_path.exists():
+        return FileResponse(svg_path, media_type="image/svg+xml")
+    raise HTTPException(status_code=404, detail="favicon not found")
 
 
 def _find_generator():
@@ -158,10 +190,10 @@ def _find_generator():
 
     # Fallback to local `certify` package (workspace)
     try:
-        from certify.main import create_certificate
+        from main import create_certificate
 
         try:
-            from certify.batch_generate import generate_batch
+            from batch_generate import generate_batch
         except Exception:
             generate_batch = None
 
@@ -228,6 +260,59 @@ if os.getenv("ENFORCE_HTTPS", "false").lower() in ("1", "true", "yes"):
 def health():
     """Health check endpoint returning OK and timestamp."""
     return {"status": "ok", "time": datetime.utcnow().isoformat() + "Z"}
+
+
+class SendResponse(BaseModel):
+    status: str
+    count: int
+
+
+# Debug endpoint to inspect generator module availability. Only enabled when
+# environment var `GEN_DEBUG` is truthy to avoid exposing info in production.
+@app.get("/debug/generator", include_in_schema=False)
+def debug_generator():
+    if not os.getenv("GEN_DEBUG", "false").lower() in ("1", "true", "yes"):
+        raise HTTPException(status_code=404, detail="not found")
+
+    info = {"certify_attendance": {}, "certify": {}}
+    import importlib.util
+    import traceback
+
+    for modname in ("certify_attendance", "certify"):
+        try:
+            spec = importlib.util.find_spec(modname)
+            info[modname]["spec"] = {
+                "name": spec.name if spec else None,
+                "origin": spec.origin if spec and hasattr(spec, "origin") else None,
+                "submodule_search_locations": (
+                    list(spec.submodule_search_locations)
+                    if spec and spec.submodule_search_locations
+                    else None
+                ),
+            }
+        except Exception:
+            info[modname]["spec_error"] = traceback.format_exc()
+        try:
+            module = importlib.import_module(modname)
+            attrs = [a for a in dir(module) if not a.startswith("__")]
+            # find callables that look like generators
+            callables = [a for a in attrs if callable(getattr(module, a, None))]
+            info[modname]["attrs"] = attrs
+            info[modname]["callables"] = callables
+            # show whether expected names are present
+            expected = [
+                "create_certificate",
+                "generate_batch",
+                "generate",
+                "render_certificates",
+            ]
+            info[modname]["has_expected"] = {
+                e: bool(getattr(module, e, None)) for e in expected
+            }
+        except Exception:
+            info[modname]["import_error"] = traceback.format_exc()
+
+    return info
 
 
 def _call_generator(
@@ -441,34 +526,143 @@ def startup_event():
         _GENERATOR = None
 
 
-@app.post("/generate")
-async def generate_single(
-    first_name: str = Form(...),
-    surname: str = Form(...),
-    email: str = Form(...),
-    conference_title: str = Form(...),
-    conference_date: str = Form(...),
-    logo: Optional[UploadFile] = File(None),
-    review: bool = Form(True),
-    send: bool = Form(False),
-    smtp_host: Optional[str] = Form(None),
-    smtp_port: Optional[int] = Form(None),
-    smtp_username: Optional[str] = Form(None),
-    smtp_password: Optional[str] = Form(None),
-    from_name: str = Form("Conference Team"),
-    from_email: str = Form("noreply@example.com"),
-    subject: str = Form("Your attendance certificate"),
-    body: str = Form("Please find your attendance certificate attached."),
-):
+def _get_generator_or_500():
+    """Ensure a generator is available, attempting discovery on-demand.
+
+    Raises an HTTPException(500) with troubleshooting hints if discovery fails.
+    """
+    global _GENERATOR
+    if _GENERATOR is None:
+        try:
+            _GENERATOR = _find_generator()
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Generator discovery failed")
+            _GENERATOR = None
     if _GENERATOR is None:
         raise HTTPException(
             status_code=500,
-            detail="certify_attendance generator not available on startup",
+            detail=(
+                "certify_attendance generator not available. "
+                "Ensure the 'certify_attendance' package is installed or that a local 'certify' package is on PYTHONPATH. "
+                "In Docker builds install the package (e.g. pip install . or pip install certify-attendance) or ensure the source is copied into the image."
+            ),
         )
+    return _GENERATOR
+
+
+@app.post(
+    "/generate",
+    summary="Generate single certificate",
+    description=(
+        "Generate a single attendance certificate for one attendee. "
+        "By default the endpoint returns a ZIP file for review. Set `send=true` "
+        "to email the certificate to the attendee (requires SMTP settings). "
+        "Example curl: `curl -F 'first_name=Jane' -F 'surname=Doe' "
+        "-F 'email=jane@example.com' -F 'conference_title=Fireside' "
+        "-F 'conference_date=2026-02-27' http://localhost:8000/generate -o certs.zip`"
+    ),
+    responses={
+        200: {
+            "description": "ZIP download or JSON send confirmation",
+            "content": {
+                "application/json": {"example": {"status": "sent", "count": 1}},
+                "application/zip": {"example": "(binary ZIP file)"},
+            },
+        },
+        422: {
+            "description": "Validation error",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "SMTP host and port required to send emails"}
+                }
+            },
+        },
+        500: {
+            "description": "Server error",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "certify_attendance generator not available on startup"
+                    }
+                }
+            },
+        },
+    },
+)
+async def generate_single(
+    first_name: str = Form(..., description="Attendee first name", examples=["Jane"]),
+    surname: str = Form(..., description="Attendee surname", examples=["Doe"]),
+    email: str = Form(
+        ..., description="Attendee email address", examples=["jane@example.com"]
+    ),
+    conference_title: str = Form(
+        ..., description="Event / conference title", examples=["Fireside Conference"]
+    ),
+    conference_date: str = Form(
+        ...,
+        description="Date for the certificate (ISO YYYY-MM-DD)",
+        examples=["2026-02-27"],
+    ),
+    logo: Optional[UploadFile] = File(
+        None,
+        description="Optional organiser logo (PNG/JPEG) to embed on the certificate",
+    ),
+    review: bool = Form(
+        True,
+        description="If true return a ZIP of generated PDFs for review",
+        examples=[True],
+    ),
+    send: bool = Form(
+        False,
+        description="If true send the generated PDF by email to the attendee",
+        examples=[False],
+    ),
+    smtp_host: Optional[str] = Form(
+        None,
+        description="Optional SMTP host (falls back to SMTP_HOST env)",
+        examples=["smtp.example.com"],
+    ),
+    smtp_port: Optional[int] = Form(
+        None,
+        description="Optional SMTP port (falls back to SMTP_PORT env)",
+        examples=[587],
+    ),
+    smtp_username: Optional[str] = Form(
+        None,
+        description="Optional SMTP username (falls back to SMTP_USERNAME env)",
+        examples=["user@example.com"],
+    ),
+    smtp_password: Optional[str] = Form(
+        None,
+        description="Optional SMTP password (falls back to SMTP_PASSWORD env)",
+        examples=["password"],
+    ),
+    from_name: str = Form(
+        "Conference Team",
+        description="From name for outgoing emails",
+        examples=["Conference Team"],
+    ),
+    from_email: str = Form(
+        "noreply@example.com",
+        description="From email address for outgoing emails",
+        examples=["noreply@example.com"],
+    ),
+    subject: str = Form(
+        "Your attendance certificate",
+        description="Email subject when sending",
+        examples=["Your attendance certificate"],
+    ),
+    body: str = Form(
+        "Please find your attendance certificate attached.",
+        description="Email body when sending",
+        examples=["Please find your attendance certificate attached."],
+    ),
+):
+    generator = _get_generator_or_500()
     logo_bytes = await logo.read() if logo else b""
     attendees = [{"first_name": first_name, "surname": surname, "email": email}]
     pdf_items = _call_generator(
-        _GENERATOR, attendees, conference_title, conference_date, logo_bytes or None
+        generator, attendees, conference_title, conference_date, logo_bytes or None
     )
     if review:
         # return a zip for the single item as stream
@@ -517,34 +711,106 @@ async def generate_single(
     )
 
 
-@app.post("/generate/csv")
+@app.post(
+    "/generate/csv",
+    summary="Generate batch certificates from CSV",
+    description=(
+        "Upload a CSV with attendee rows to generate certificates in batch. "
+        "CSV headers are case-insensitive and must include columns containing 'first', "
+        "'surname' (or 'last') and 'email'. By default the endpoint returns a ZIP. "
+        "Set `send=true` to email results using the provided SMTP settings or env vars."
+    ),
+    responses={
+        200: {
+            "description": "ZIP download or JSON send confirmation",
+            "content": {
+                "application/json": {"example": {"status": "sent", "count": 3}},
+                "application/zip": {"example": "(binary ZIP file)"},
+            },
+        },
+        422: {
+            "description": "Validation error",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "CSV missing expected columns (found: [...])"}
+                }
+            },
+        },
+        500: {
+            "description": "Server error",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "certify_attendance generator not available on startup"
+                    }
+                }
+            },
+        },
+    },
+)
 async def generate_csv(
-    csv_file: UploadFile = File(...),
-    conference_title: str = Form(...),
-    conference_date: str = Form(...),
-    logo: Optional[UploadFile] = File(None),
-    review: bool = Form(True),
-    send: bool = Form(False),
-    smtp_host: Optional[str] = Form(None),
-    smtp_port: Optional[int] = Form(None),
-    smtp_username: Optional[str] = Form(None),
-    smtp_password: Optional[str] = Form(None),
-    from_name: str = Form("Conference Team"),
-    from_email: str = Form("noreply@example.com"),
-    subject: str = Form("Your attendance certificate"),
-    body: str = Form("Please find your attendance certificate attached."),
+    csv_file: UploadFile = File(
+        ...,
+        description="CSV file with attendee rows. Required headers: first, surname/last, email.",
+    ),
+    conference_title: str = Form(
+        ..., description="Event / conference title", examples=["Fireside Conference"]
+    ),
+    conference_date: str = Form(
+        ...,
+        description="Date for the certificates (ISO YYYY-MM-DD)",
+        examples=["2026-02-27"],
+    ),
+    logo: Optional[UploadFile] = File(
+        None, description="Optional organiser logo to include on certificates"
+    ),
+    review: bool = Form(
+        True, description="If true return ZIP for review", examples=[True, False]
+    ),
+    send: bool = Form(
+        False,
+        description="If true send generated PDFs by email",
+        examples=[True, False],
+    ),
+    smtp_host: Optional[str] = Form(
+        None, description="Optional SMTP host (falls back to SMTP_HOST env)"
+    ),
+    smtp_port: Optional[int] = Form(
+        None,
+        description="Optional SMTP port (falls back to SMTP_PORT env)",
+        examples=[587],
+    ),
+    smtp_username: Optional[str] = Form(
+        None, description="Optional SMTP username (falls back to SMTP_USERNAME env)"
+    ),
+    smtp_password: Optional[str] = Form(
+        None, description="Optional SMTP password (falls back to SMTP_PASSWORD env)"
+    ),
+    from_name: str = Form(
+        "Conference Team",
+        description="From name for outgoing emails",
+        examples=["Conference Team"],
+    ),
+    from_email: str = Form(
+        "noreply@example.com",
+        description="From email for outgoing emails",
+        examples=["noreply@example.com"],
+    ),
+    subject: str = Form(
+        "Your attendance certificate", description="Email subject when sending"
+    ),
+    body: str = Form(
+        "Please find your attendance certificate attached.",
+        description="Email body when sending",
+    ),
 ):
-    if _GENERATOR is None:
-        raise HTTPException(
-            status_code=500,
-            detail="certify_attendance generator not available on startup",
-        )
+    generator = _get_generator_or_500()
     csv_bytes = await csv_file.read()
     # Try to use the library's batch generator (in-memory) when available
     logo_bytes = await logo.read() if logo else b""
     batch_fn = None
-    if isinstance(_GENERATOR, dict):
-        batch_fn = _GENERATOR.get("batch")
+    if isinstance(generator, dict):
+        batch_fn = generator.get("batch")
 
     # write CSV to a temp file for the batch generator
     tmp_csv = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
