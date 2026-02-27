@@ -1,4 +1,7 @@
+
 # Certify Attendance Server
+
+![certify](https://github.com/eatyourpeas/certify-serve/blob/main/site/icons/favicon.svg)
 
 [![Swagger Docs](https://img.shields.io/badge/Docs-Swagger-blue?logo=swagger)](/swagger)
 
