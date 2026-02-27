@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "certify_server"
+version = "0.1.0"
+description = "FastAPI server wrapping certify-attendance for single and batch certificate generation and optional email sending."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.95",
+    "uvicorn[standard]>=0.22",
+    "python-multipart>=0.0.6",
+    "certify-attendance>=0.0.1",
+]

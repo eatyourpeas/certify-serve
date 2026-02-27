@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Run docker compose in the repository root in detached mode with rebuild
+cd "$(dirname "$0")/.." || exit 1
+echo "Starting services with docker compose..."
+docker compose up --build -d --remove-orphans
+echo "Services started. Use 'docker compose logs -f' to follow logs."
