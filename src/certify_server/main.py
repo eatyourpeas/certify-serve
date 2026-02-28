@@ -1,8 +1,6 @@
 import io
 import csv
 import zipfile
-import importlib
-import inspect
 import logging
 import sys
 import smtplib
@@ -11,7 +9,7 @@ import os
 from email.message import EmailMessage
 from typing import List, Dict, Tuple, Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Query
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import time
@@ -24,6 +22,12 @@ from starlette.responses import JSONResponse
 from starlette.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import httpx
+
+from certify import (
+    create_certificate,
+    generate_batch,
+)  # the installed package we call to generate certificates
 
 
 # Security: simple headers middleware
@@ -34,7 +38,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         # Prevent clickjacking
         response.headers.setdefault("X-Frame-Options", "DENY")
-        # Minimal referrer policy
+
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         # Add HSTS when HTTPS enforcement is enabled
         try:
@@ -148,62 +152,6 @@ def favicon_png():
     raise HTTPException(status_code=404, detail="favicon not found")
 
 
-def _find_generator():
-    """Try to import the local `certify` package functions first.
-    Falls back to attempting the previously used discovery on `certify_attendance`.
-    """
-    # Prefer published `certify_attendance` package (PyPI) when available
-    try:
-        module = importlib.import_module("certify_attendance")
-        # try to find obvious single-file generators
-        candidates = [
-            "generate_certificates",
-            "generate_pdfs",
-            "render_certificates",
-            "generate",
-            "create_certificates",
-        ]
-        for name in candidates:
-            if hasattr(module, name) and callable(getattr(module, name)):
-                single = getattr(module, name)
-                # try to import batch generator name if present on the package
-                batch = getattr(module, "generate_batch", None)
-                return {"single": single, "batch": batch}
-
-        # search for any callable with pdf in the name
-        for name, obj in vars(module).items():
-            if callable(obj) and "pdf" in name.lower():
-                batch = getattr(module, "generate_batch", None)
-                return {"single": obj, "batch": batch}
-
-        # look for a class with a generate-like method
-        for name, obj in vars(module).items():
-            if inspect.isclass(obj):
-                for m in ("generate", "create", "render"):
-                    if hasattr(obj, m):
-                        instance = obj()
-                        batch = getattr(module, "generate_batch", None)
-                        return {"single": getattr(instance, m), "batch": batch}
-    except Exception:
-        # ignore and fallback to local package
-        pass
-
-    # Fallback to local `certify` package (workspace)
-    try:
-        from main import create_certificate
-
-        try:
-            from batch_generate import generate_batch
-        except Exception:
-            generate_batch = None
-
-        return {"single": create_certificate, "batch": generate_batch}
-    except Exception:
-        raise RuntimeError(
-            "Could not import 'certify_attendance' nor local 'certify' package"
-        )
-
-
 # Attach rate limiter using env-configured values (defaults safe for development)
 RATE_LIMIT = int(os.getenv("RATE_LIMIT", "60"))
 RATE_PERIOD = int(os.getenv("RATE_PERIOD", "60"))
@@ -267,161 +215,6 @@ class SendResponse(BaseModel):
     count: int
 
 
-# Debug endpoint to inspect generator module availability. Only enabled when
-# environment var `GEN_DEBUG` is truthy to avoid exposing info in production.
-@app.get("/debug/generator", include_in_schema=False)
-def debug_generator():
-    if not os.getenv("GEN_DEBUG", "false").lower() in ("1", "true", "yes"):
-        raise HTTPException(status_code=404, detail="not found")
-
-    info = {"certify_attendance": {}, "certify": {}}
-    import importlib.util
-    import traceback
-
-    for modname in ("certify_attendance", "certify"):
-        try:
-            spec = importlib.util.find_spec(modname)
-            info[modname]["spec"] = {
-                "name": spec.name if spec else None,
-                "origin": spec.origin if spec and hasattr(spec, "origin") else None,
-                "submodule_search_locations": (
-                    list(spec.submodule_search_locations)
-                    if spec and spec.submodule_search_locations
-                    else None
-                ),
-            }
-        except Exception:
-            info[modname]["spec_error"] = traceback.format_exc()
-        try:
-            module = importlib.import_module(modname)
-            attrs = [a for a in dir(module) if not a.startswith("__")]
-            # find callables that look like generators
-            callables = [a for a in attrs if callable(getattr(module, a, None))]
-            info[modname]["attrs"] = attrs
-            info[modname]["callables"] = callables
-            # show whether expected names are present
-            expected = [
-                "create_certificate",
-                "generate_batch",
-                "generate",
-                "render_certificates",
-            ]
-            info[modname]["has_expected"] = {
-                e: bool(getattr(module, e, None)) for e in expected
-            }
-        except Exception:
-            info[modname]["import_error"] = traceback.format_exc()
-
-    return info
-
-
-def _call_generator(
-    generator_obj,
-    attendees: List[Dict],
-    title: str,
-    date: str,
-    logo_bytes: Optional[bytes] = None,
-):
-    """Support the `create_certificate` signature from the `certify` project.
-    For single attendees, generate temporary PDF files and return in-memory bytes mapped to email.
-    For batch generation, if `generate_batch` is available, use it to produce files and email jobs.
-    """
-    out: List[Tuple[str, bytes]] = []
-    single_fn = (
-        generator_obj.get("single")
-        if isinstance(generator_obj, dict)
-        else generator_obj
-    )
-
-    # If single create_certificate is available, call it per attendee writing to a temp file
-    if single_fn:
-        for a in attendees:
-            # Build attendee name and output path
-            attendee_name = (
-                a.get("first_name")
-                and a.get("surname")
-                and f"{a.get('first_name')} {a.get('surname')}"
-                or a.get("name")
-                or a.get("attendee_name")
-            )
-            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
-            os.close(tmp_fd)
-            # create_certificate signature expects attendee_name, course_title, location, date, output_path, organiser, organiser_logo, host_hospital, host_trust, host_name
-            organiser_logo_path = None
-            if logo_bytes:
-                # write logo to temp file
-                logo_fd, logo_path = tempfile.mkstemp(suffix=".png")
-                with os.fdopen(logo_fd, "wb") as lf:
-                    lf.write(logo_bytes)
-                organiser_logo_path = logo_path
-
-            try:
-                # fill required fields with best-effort defaults
-                course_title = title
-                location = a.get("location", "")
-                create_kwargs = {
-                    "attendee_name": attendee_name,
-                    "course_title": course_title,
-                    "location": location or "",
-                    "date": date,
-                    "output_path": tmp_path,
-                }
-                # If the function accepts organiser_logo param, pass the path
-                try:
-                    # call with kwargs
-                    single_fn(
-                        **create_kwargs,
-                        organiser_logo=organiser_logo_path or "logo.png",
-                    )
-                except TypeError:
-                    # try positional fallback
-                    single_fn(
-                        attendee_name, course_title, location or "", date, tmp_path
-                    )
-
-                with open(tmp_path, "rb") as pf:
-                    pdf_bytes = pf.read()
-                out.append(
-                    (
-                        a.get("email", a.get("recipient", "unknown@example.com")),
-                        pdf_bytes,
-                    )
-                )
-            finally:
-                try:
-                    os.remove(tmp_path)
-                except Exception:
-                    pass
-                if logo_bytes and organiser_logo_path:
-                    try:
-                        os.remove(organiser_logo_path)
-                    except Exception:
-                        pass
-        return out
-
-    raise RuntimeError("No supported generator function found")
-
-
-def _normalize_generator_result(result) -> List[Tuple[str, bytes]]:
-    """Normalize various expected return types into List[(email, pdf_bytes)]."""
-    out = []
-    if result is None:
-        return out
-    # list of tuples
-    if isinstance(result, (list, tuple)):
-        for item in result:
-            if isinstance(item, (list, tuple)) and len(item) >= 2:
-                email, pdf = item[0], item[1]
-                out.append((email, pdf))
-            elif isinstance(item, dict):
-                # expect keys like 'email' and 'pdf' or 'pdf_bytes'
-                email = item.get("email") or item.get("attendee_email")
-                pdf = item.get("pdf") or item.get("pdf_bytes") or item.get("content")
-                if email and pdf:
-                    out.append((email, pdf))
-    return out
-
-
 def _parse_csv(file_bytes: bytes) -> List[Dict]:
     text = file_bytes.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
@@ -455,6 +248,331 @@ def _parse_csv(file_bytes: bytes) -> List[Dict]:
     return attendees
 
 
+@app.post(
+    "/generate/eventbrite",
+    summary="Generate certificates from Eventbrite attendees",
+    description=(
+        "Fetch attendees for an Eventbrite event and generate certificates. "
+        "Provide `event_id` and optionally override `EVENTBRITE_TOKEN` via form. "
+        "Set `review=true` to return a ZIP of the generated PDFs or `send=true` to email them."
+    ),
+)
+async def generate_eventbrite(
+    event_id: str = Form(
+        ..., description="Eventbrite event id", examples=["1234567890"]
+    ),
+    eventbrite_token: Optional[str] = Form(
+        None,
+        description="Optional Eventbrite token (falls back to EVENTBRITE_TOKEN env)",
+    ),
+    status: str = Form(
+        "",
+        description=(
+            "Optional attendee status filter (e.g. attending, cancelled). "
+            "When empty (default) no status filter is sent so completed/past events are included."
+        ),
+        examples=["", "attending", "cancelled"],
+    ),
+    logo: Optional[UploadFile] = File(
+        None, description="Optional organiser logo to include on certificates"
+    ),
+    review: bool = Form(
+        True, description="If true return ZIP for review", examples=[True, False]
+    ),
+    send: bool = Form(
+        False,
+        description="If true send generated PDFs by email",
+        examples=[True, False],
+    ),
+    smtp_host: Optional[str] = Form(
+        None, description="Optional SMTP host (falls back to SMTP_HOST env)"
+    ),
+    smtp_port: Optional[int] = Form(
+        None,
+        description="Optional SMTP port (falls back to SMTP_PORT env)",
+        examples=[587],
+    ),
+    smtp_username: Optional[str] = Form(
+        None, description="Optional SMTP username (falls back to SMTP_USERNAME env)"
+    ),
+    smtp_password: Optional[str] = Form(
+        None, description="Optional SMTP password (falls back to SMTP_PASSWORD env)"
+    ),
+    from_name: str = Form(
+        "Conference Team", description="From name for outgoing emails"
+    ),
+    from_email: str = Form(
+        "noreply@example.com", description="From email for outgoing emails"
+    ),
+    subject: str = Form("Your attendance certificate"),
+    body: str = Form("Please find your attendance certificate attached."),
+):
+    """Fetch attendees from Eventbrite and generate certificates for them.
+
+    This endpoint requires `EVENTBRITE_TOKEN` in the environment or a token passed
+    via the `eventbrite_token` form field. The token is sent as `Authorization: Bearer <token>`.
+    """
+    token = eventbrite_token or os.getenv("EVENTBRITE_TOKEN")
+    if not token:
+        raise HTTPException(
+            status_code=422,
+            detail="Eventbrite token required (EVENTBRITE_TOKEN or form)",
+        )
+    token = str(token).strip().strip('"').strip("'")
+    if token.lower().startswith("bearer "):
+        token = token.split(None, 1)[1]
+
+    headers = {"Authorization": f"Bearer {token}", "Host": "www.eventbriteapi.com"}
+    attendees_url = f"https://www.eventbriteapi.com/v3/events/{event_id}/attendees/"
+    event_url = f"https://www.eventbriteapi.com/v3/events/{event_id}/"
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
+            # event metadata
+            evr = await client.get(event_url)
+            if evr.status_code == 401:
+                raise HTTPException(
+                    status_code=401, detail=f"Eventbrite unauthorized: {evr.text}"
+                )
+            evr.raise_for_status()
+            ev = evr.json()
+            course_title = (ev.get("name") or {}).get("text") or ""
+            course_date = (
+                (ev.get("start") or {}).get("local")
+                or (ev.get("start") or {}).get("utc")
+                or ""
+            )
+
+            # fetch all attendees (paginated)
+            attendees_raw = []
+            continuation = None
+            while True:
+                params = {}
+                if status:
+                    params["status"] = status
+                if continuation:
+                    params["continuation"] = continuation
+                resp = await client.get(attendees_url, params=params)
+                if resp.status_code == 401:
+                    raise HTTPException(
+                        status_code=401, detail=f"Eventbrite unauthorized: {resp.text}"
+                    )
+                if resp.status_code == 429:
+                    ra = resp.headers.get("Retry-After")
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Eventbrite rate limited; retry after {ra}",
+                    )
+                resp.raise_for_status()
+                data = resp.json()
+                attendees_raw.extend(data.get("attendees", []))
+                pagination = data.get("pagination", {})
+                if not pagination.get("has_more_items"):
+                    break
+                continuation = pagination.get("continuation")
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Eventbrite fetch failed: {exc}")
+
+    if not attendees_raw:
+        raise HTTPException(status_code=404, detail="No attendees found for event")
+
+    # prepare organiser logo file path if provided
+    organiser_logo_path = None
+    if logo:
+        logo_bytes = await logo.read()
+        lf = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        lf.write(logo_bytes)
+        lf.close()
+        organiser_logo_path = str(lf.name)
+
+    # build temp CSV with header matching generate_batch expectations
+    tmp_csv = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
+    try:
+        with open(tmp_csv.name, "w", encoding="utf-8") as fh:
+            # header: attendee_name plus supported override columns
+            headers_cols = [
+                "attendee_name",
+                "output_filename",
+                "host_name",
+                "organiser",
+                "organiser_logo",
+                "course_title",
+                "location",
+                "date",
+                "host_hospital",
+                "host_trust",
+            ]
+            fh.write(",".join(headers_cols) + "\n")
+            for a in attendees_raw:
+                profile = a.get("profile", {})
+                name = profile.get("name") or " ".join(
+                    filter(None, [profile.get("first_name"), profile.get("last_name")])
+                )
+                # sanity: skip if no email (we don't want to generate for anonymous entries)
+                email = profile.get("email")
+                if not email:
+                    logging.getLogger(__name__).warning(
+                        "Skipping attendee without email (id=%s)", a.get("id")
+                    )
+                    continue
+                # output filename safe: use email-based name
+                output_filename = (
+                    email.replace("@", "_at_").replace(".", "_")
+                ) + ".pdf"
+                row = [
+                    _csv_escape(name),
+                    _csv_escape(output_filename),
+                    _csv_escape(""),
+                    _csv_escape(from_name),
+                    _csv_escape(organiser_logo_path or ""),
+                    _csv_escape(course_title),
+                    _csv_escape(""),
+                    _csv_escape(course_date),
+                    _csv_escape(""),
+                    _csv_escape(""),
+                ]
+                fh.write(",".join(row) + "\n")
+
+        tmp_csv_path = Path(tmp_csv.name)
+
+        # call the installed package's batch generator
+        try:
+            batch_fn = generate_batch
+            if not batch_fn:
+                raise RuntimeError("generate_batch not found on certify package")
+
+            res = batch_fn(
+                input_path=tmp_csv_path,
+                event_name=course_title,
+                event_year=str(datetime.now().year),
+                defaults={
+                    "organiser": from_name,
+                    "organiser_logo": organiser_logo_path,
+                    "course_title": course_title,
+                    "location": "",
+                    "date": course_date,
+                    "host_hospital": "",
+                    "host_trust": "",
+                    "host_name": "",
+                },
+                output_dir=None,
+                make_zip=True,
+                in_memory=True,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Batch generation failed: {exc}"
+            )
+
+        # Handle review request: return zip file
+        if review:
+            zip_bytes = res.get("zip")
+            if zip_bytes:
+                return StreamingResponse(
+                    io.BytesIO(zip_bytes),
+                    media_type="application/zip",
+                    headers={
+                        "Content-Disposition": "attachment; filename=certificates.zip"
+                    },
+                )
+            # fallback: build zip from generated entries
+            generated = res.get("generated") or []
+            if generated:
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for g in generated:
+                        name = g.get("filename") or (g.get("name") or "certificate.pdf")
+                        zf.writestr(name, g.get("pdf_bytes") or b"")
+                buf.seek(0)
+                return StreamingResponse(
+                    buf,
+                    media_type="application/zip",
+                    headers={
+                        "Content-Disposition": "attachment; filename=certificates.zip"
+                    },
+                )
+
+        # Handle send request: email certificates
+        if send:
+            # Prefer environment values if form fields omitted
+            smtp_host = smtp_host or os.getenv("SMTP_HOST")
+            smtp_port = smtp_port or os.getenv("SMTP_PORT")
+            smtp_username = smtp_username or os.getenv("SMTP_USERNAME")
+            smtp_password = smtp_password or os.getenv("SMTP_PASSWORD")
+            from_name = from_name or os.getenv("FROM_NAME", from_name)
+            from_email = from_email or os.getenv("FROM_EMAIL", from_email)
+
+            if not smtp_host or not smtp_port:
+                raise HTTPException(
+                    status_code=422,
+                    detail="SMTP host and port required to send emails",
+                )
+            try:
+                smtp_port_val = int(smtp_port)
+            except Exception:
+                raise HTTPException(status_code=422, detail="Invalid SMTP port")
+
+            email_jobs = res.get("email_jobs") or []
+            pdf_items: List[Tuple[str, bytes]] = []
+            for job in email_jobs:
+                recipient = job.get("recipient")
+                pdf = job.get("pdf_bytes") or None
+                if not pdf and job.get("filepath"):
+                    try:
+                        with open(job.get("filepath"), "rb") as fh:
+                            pdf = fh.read()
+                    except Exception:
+                        pdf = None
+                if recipient and pdf:
+                    pdf_items.append((recipient, pdf))
+
+            _send_emails(
+                smtp_host,
+                smtp_port_val,
+                smtp_username,
+                smtp_password,
+                from_name,
+                from_email,
+                subject,
+                body,
+                pdf_items,
+            )
+            return {"status": "sent", "count": len(pdf_items)}
+
+        # default: return zip file
+        zip_bytes = res.get("zip")
+        if zip_bytes:
+            return StreamingResponse(
+                io.BytesIO(zip_bytes),
+                media_type="application/zip",
+                headers={
+                    "Content-Disposition": "attachment; filename=certificates.zip"
+                },
+            )
+        generated = res.get("generated") or []
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for g in generated:
+                name = g.get("filename") or (g.get("name") or "certificate.pdf")
+                zf.writestr(name, g.get("pdf_bytes") or b"")
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=certificates.zip"},
+        )
+    finally:
+        try:
+            os.unlink(tmp_csv.name)
+        except Exception:
+            pass
+        if organiser_logo_path:
+            try:
+                os.unlink(organiser_logo_path)
+            except Exception:
+                pass
+
+
 def _create_zip(pdf_items: List[Tuple[str, bytes]]) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -464,6 +582,21 @@ def _create_zip(pdf_items: List[Tuple[str, bytes]]) -> bytes:
             zf.writestr(f"{name}.pdf", pdf)
     buf.seek(0)
     return buf.read()
+
+
+def _csv_escape(val: Optional[str]) -> str:
+    """Escape a CSV cell for minimal CSV writing.
+
+    - Converts None to empty string
+    - Wraps value in double quotes if it contains comma, quote, or newline
+    - Doubles internal quotes per CSV rules
+    """
+    if val is None:
+        return ""
+    s = str(val)
+    if any(ch in s for ch in [",", '"', "\n", "\r"]):
+        s = '"' + s.replace('"', '""') + '"'
+    return s
 
 
 def _send_emails(
@@ -511,43 +644,6 @@ def _send_emails(
             server.send_message(msg)
     finally:
         server.quit()
-
-
-# cache generator lookup
-_GENERATOR = None
-
-
-@app.on_event("startup")
-def startup_event():
-    global _GENERATOR
-    try:
-        _GENERATOR = _find_generator()
-    except Exception:
-        _GENERATOR = None
-
-
-def _get_generator_or_500():
-    """Ensure a generator is available, attempting discovery on-demand.
-
-    Raises an HTTPException(500) with troubleshooting hints if discovery fails.
-    """
-    global _GENERATOR
-    if _GENERATOR is None:
-        try:
-            _GENERATOR = _find_generator()
-        except Exception as exc:
-            logging.getLogger(__name__).exception("Generator discovery failed")
-            _GENERATOR = None
-    if _GENERATOR is None:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "certify_attendance generator not available. "
-                "Ensure the 'certify_attendance' package is installed or that a local 'certify' package is on PYTHONPATH. "
-                "In Docker builds install the package (e.g. pip install . or pip install certify-attendance) or ensure the source is copied into the image."
-            ),
-        )
-    return _GENERATOR
 
 
 @app.post(
@@ -658,12 +754,44 @@ async def generate_single(
         examples=["Please find your attendance certificate attached."],
     ),
 ):
-    generator = _get_generator_or_500()
     logo_bytes = await logo.read() if logo else b""
-    attendees = [{"first_name": first_name, "surname": surname, "email": email}]
-    pdf_items = _call_generator(
-        generator, attendees, conference_title, conference_date, logo_bytes or None
-    )
+    # Prepare organiser logo file path if provided
+    organiser_logo_path = None
+    if logo_bytes:
+        lf = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        lf.write(logo_bytes)
+        lf.close()
+        organiser_logo_path = str(lf.name)
+
+    # Generate single certificate
+    try:
+        attendee_name = f"{first_name} {surname}"
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+        os.close(tmp_fd)
+
+        create_certificate(
+            attendee_name=attendee_name,
+            course_title=conference_title,
+            location="",
+            date=conference_date,
+            output_path=tmp_path,
+            organiser_logo=organiser_logo_path or "logo.png",
+        )
+
+        with open(tmp_path, "rb") as pf:
+            pdf_bytes = pf.read()
+        pdf_items = [(email, pdf_bytes)]
+    finally:
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+        if organiser_logo_path:
+            try:
+                os.remove(organiser_logo_path)
+            except Exception:
+                pass
+
     if review:
         # return a zip for the single item as stream
         zip_bytes = _create_zip(pdf_items)
@@ -804,13 +932,15 @@ async def generate_csv(
         description="Email body when sending",
     ),
 ):
-    generator = _get_generator_or_500()
     csv_bytes = await csv_file.read()
-    # Try to use the library's batch generator (in-memory) when available
     logo_bytes = await logo.read() if logo else b""
-    batch_fn = None
-    if isinstance(generator, dict):
-        batch_fn = generator.get("batch")
+    # Prepare organiser logo file path if provided
+    organiser_logo_path = None
+    if logo_bytes:
+        lf = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        lf.write(logo_bytes)
+        lf.close()
+        organiser_logo_path = str(lf.name)
 
     # write CSV to a temp file for the batch generator
     tmp_csv = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
@@ -818,14 +948,6 @@ async def generate_csv(
         tmp_csv.write(csv_bytes)
         tmp_csv.close()
         tmp_csv_path = Path(tmp_csv.name)
-
-        # prepare defaults for generate_batch
-        organiser_logo_path = None
-        if logo_bytes:
-            lf = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-            lf.write(logo_bytes)
-            lf.close()
-            organiser_logo_path = str(lf.name)
 
         defaults = {
             "organiser": from_name,
@@ -838,107 +960,20 @@ async def generate_csv(
             "host_name": "",
         }
 
-        if batch_fn:
-            # best-effort event_year
-            event_year = str(datetime.now().year)
-            try:
-                res = batch_fn(
-                    input_path=tmp_csv_path,
-                    event_name=conference_title,
-                    event_year=event_year,
-                    defaults=defaults,
-                    output_dir=None,
-                    make_zip=True,
-                    in_memory=True,
-                )
-            except TypeError:
-                # older signatures - call with positional defaults
-                res = batch_fn(
-                    tmp_csv_path,
-                    conference_title,
-                    event_year,
-                    defaults,
-                    None,
-                    True,
-                    True,
-                )
+        # Use the batch generator from the certify package
+        event_year = str(datetime.now().year)
+        res = generate_batch(
+            input_path=tmp_csv_path,
+            event_name=conference_title,
+            event_year=event_year,
+            defaults=defaults,
+            output_dir=None,
+            make_zip=True,
+            in_memory=True,
+        )
 
-            # If review requested, prefer an in-memory zip from the batch result
-            if review:
-                zip_bytes = res.get("zip")
-                if zip_bytes:
-                    return StreamingResponse(
-                        io.BytesIO(zip_bytes),
-                        media_type="application/zip",
-                        headers={
-                            "Content-Disposition": "attachment; filename=certificates.zip"
-                        },
-                    )
-                # fallback: build zip from generated entries
-                generated = res.get("generated") or []
-                if generated:
-                    buf = io.BytesIO()
-                    with zipfile.ZipFile(
-                        buf, "w", compression=zipfile.ZIP_DEFLATED
-                    ) as zf:
-                        for g in generated:
-                            name = g.get("filename") or (g.get("name") or "certificate")
-                            zf.writestr(name, g.get("pdf_bytes") or b"")
-                    buf.seek(0)
-                    return StreamingResponse(
-                        buf,
-                        media_type="application/zip",
-                        headers={
-                            "Content-Disposition": "attachment; filename=certificates.zip"
-                        },
-                    )
-
-            # If send requested, use email_jobs produced by the batch generator
-            if send:
-                # Prefer environment values if form fields omitted
-                smtp_host = smtp_host or os.getenv("SMTP_HOST")
-                smtp_port = smtp_port or os.getenv("SMTP_PORT")
-                smtp_username = smtp_username or os.getenv("SMTP_USERNAME")
-                smtp_password = smtp_password or os.getenv("SMTP_PASSWORD")
-                from_name = from_name or os.getenv("FROM_NAME", from_name)
-                from_email = from_email or os.getenv("FROM_EMAIL", from_email)
-
-                if not smtp_host or not smtp_port:
-                    raise HTTPException(
-                        status_code=422,
-                        detail="SMTP host and port required to send emails",
-                    )
-                try:
-                    smtp_port_val = int(smtp_port)
-                except Exception:
-                    raise HTTPException(status_code=422, detail="Invalid SMTP port")
-                email_jobs = res.get("email_jobs") or []
-                pdf_items: List[Tuple[str, bytes]] = []
-                for job in email_jobs:
-                    recipient = job.get("recipient")
-                    pdf = job.get("pdf_bytes") or None
-                    if not pdf and job.get("filepath"):
-                        try:
-                            with open(job.get("filepath"), "rb") as fh:
-                                pdf = fh.read()
-                        except Exception:
-                            pdf = None
-                    if recipient and pdf:
-                        pdf_items.append((recipient, pdf))
-                _send_emails(
-                    smtp_host,
-                    smtp_port_val,
-                    smtp_username,
-                    smtp_password,
-                    from_name,
-                    from_email,
-                    subject,
-                    body,
-                    pdf_items,
-                )
-                return {"status": "sent", "count": len(pdf_items)}
-
-            # default: return zip (if any) or rebuild from generated
+        # If review requested, prefer an in-memory zip from the batch result
+        if review:
             zip_bytes = res.get("zip")
             if zip_bytes:
                 return StreamingResponse(
@@ -948,37 +983,26 @@ async def generate_csv(
                         "Content-Disposition": "attachment; filename=certificates.zip"
                     },
                 )
+            # fallback: build zip from generated entries
             generated = res.get("generated") or []
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                for g in generated:
-                    name = g.get("filename") or (g.get("name") or "certificate")
-                    zf.writestr(name, g.get("pdf_bytes") or b"")
-            buf.seek(0)
-            return StreamingResponse(
-                buf,
-                media_type="application/zip",
-                headers={
-                    "Content-Disposition": "attachment; filename=certificates.zip"
-                },
-            )
+            if generated:
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for g in generated:
+                        name = g.get("filename") or (g.get("name") or "certificate")
+                        zf.writestr(name, g.get("pdf_bytes") or b"")
+                buf.seek(0)
+                return StreamingResponse(
+                    buf,
+                    media_type="application/zip",
+                    headers={
+                        "Content-Disposition": "attachment; filename=certificates.zip"
+                    },
+                )
 
-        # Fallback path: use per-attendee generator as before
-        attendees = _parse_csv(csv_bytes)
-        pdf_items = _call_generator(
-            _GENERATOR, attendees, conference_title, conference_date, logo_bytes or None
-        )
-        if review:
-            zip_bytes = _create_zip(pdf_items)
-            return StreamingResponse(
-                io.BytesIO(zip_bytes),
-                media_type="application/zip",
-                headers={
-                    "Content-Disposition": "attachment; filename=certificates.zip"
-                },
-            )
+        # If send requested, use email_jobs produced by the batch generator
         if send:
-            # Prefer environment values if form fields are omitted
+            # Prefer environment values if form fields omitted
             smtp_host = smtp_host or os.getenv("SMTP_HOST")
             smtp_port = smtp_port or os.getenv("SMTP_PORT")
             smtp_username = smtp_username or os.getenv("SMTP_USERNAME")
@@ -988,12 +1012,26 @@ async def generate_csv(
 
             if not smtp_host or not smtp_port:
                 raise HTTPException(
-                    status_code=422, detail="SMTP host and port required to send emails"
+                    status_code=422,
+                    detail="SMTP host and port required to send emails",
                 )
             try:
                 smtp_port_val = int(smtp_port)
             except Exception:
                 raise HTTPException(status_code=422, detail="Invalid SMTP port")
+            email_jobs = res.get("email_jobs") or []
+            pdf_items: List[Tuple[str, bytes]] = []
+            for job in email_jobs:
+                recipient = job.get("recipient")
+                pdf = job.get("pdf_bytes") or None
+                if not pdf and job.get("filepath"):
+                    try:
+                        with open(job.get("filepath"), "rb") as fh:
+                            pdf = fh.read()
+                    except Exception:
+                        pdf = None
+                if recipient and pdf:
+                    pdf_items.append((recipient, pdf))
             _send_emails(
                 smtp_host,
                 smtp_port_val,
@@ -1006,12 +1044,31 @@ async def generate_csv(
                 pdf_items,
             )
             return {"status": "sent", "count": len(pdf_items)}
-        zip_bytes = _create_zip(pdf_items)
+
+        # default: return zip (if any) or rebuild from generated
+        zip_bytes = res.get("zip")
+        if zip_bytes:
+            return StreamingResponse(
+                io.BytesIO(zip_bytes),
+                media_type="application/zip",
+                headers={
+                    "Content-Disposition": "attachment; filename=certificates.zip"
+                },
+            )
+        generated = res.get("generated") or []
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for g in generated:
+                name = g.get("filename") or (g.get("name") or "certificate")
+                zf.writestr(name, g.get("pdf_bytes") or b"")
+        buf.seek(0)
         return StreamingResponse(
-            io.BytesIO(zip_bytes),
+            buf,
             media_type="application/zip",
             headers={"Content-Disposition": "attachment; filename=certificates.zip"},
         )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Batch generation failed: {exc}")
     finally:
         try:
             os.unlink(tmp_csv.name)
@@ -1022,3 +1079,112 @@ async def generate_csv(
                 os.unlink(organiser_logo_path)
         except Exception:
             pass
+
+
+@app.get(
+    "/eventbrite/latest",
+    summary="Get latest Eventbrite event for the authenticated user's first organization",
+    description=(
+        "Fetch the user's organizations via `/users/me/organizations/`, take the first organization, "
+        "list that organization's events and return the latest event by start date. "
+        "Requires `EVENTBRITE_TOKEN` in environment or `eventbrite_token` query parameter."
+    ),
+)
+async def eventbrite_latest(
+    eventbrite_token: Optional[str] = Query(
+        None,
+        description="Eventbrite token override (falls back to EVENTBRITE_TOKEN env)",
+    ),
+    org_id: Optional[str] = Query(
+        None,
+        description="Optional organization id to use instead of discovering via /users/me/organizations/",
+    ),
+    status: str = Query(
+        "",
+        description=(
+            "Optional event status filter (e.g. live, draft, started, ended). "
+            "When empty (default) no status filter is sent so past/completed events are included."
+        ),
+        examples=["", "live", "draft", "started", "ended"],
+    ),
+):
+    token = eventbrite_token or os.getenv("EVENTBRITE_TOKEN")
+    if not token:
+        raise HTTPException(
+            status_code=422,
+            detail="Eventbrite token required (EVENTBRITE_TOKEN or eventbrite_token)",
+        )
+    token = str(token).strip().strip('"').strip("'")
+    if token.lower().startswith("bearer "):
+        token = token.split(None, 1)[1]
+
+    headers = {"Authorization": f"Bearer {token}", "Host": "www.eventbriteapi.com"}
+
+    async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
+        # discover org if not provided
+        if not org_id:
+            try:
+                resp = await client.get(
+                    "https://www.eventbriteapi.com/v3/users/me/organizations/"
+                )
+                if resp.status_code == 429:
+                    ra = resp.headers.get("Retry-After")
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Eventbrite rate limited; retry after {ra}",
+                    )
+                resp.raise_for_status()
+                data = resp.json()
+                orgs = data.get("organizations") or []
+                if not orgs:
+                    raise HTTPException(
+                        status_code=404, detail="No organizations found for user"
+                    )
+                org_id = orgs[0].get("id")
+            except httpx.HTTPError as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Eventbrite organizations fetch failed: {exc}",
+                )
+
+        # fetch events for organization (paginated)
+        events: List[Dict] = []
+        url = f"https://www.eventbriteapi.com/v3/organizations/{org_id}/events/"
+        continuation = None
+        try:
+            while True:
+                params = {}
+                if status:
+                    params["status"] = status
+                if continuation:
+                    params["continuation"] = continuation
+                resp = await client.get(url, params=params)
+                if resp.status_code == 429:
+                    ra = resp.headers.get("Retry-After")
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Eventbrite rate limited; retry after {ra}",
+                    )
+                resp.raise_for_status()
+                data = resp.json()
+                events.extend(data.get("events", []))
+                pagination = data.get("pagination", {})
+                if not pagination.get("has_more_items"):
+                    break
+                continuation = pagination.get("continuation")
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502, detail=f"Eventbrite events fetch failed: {exc}"
+            )
+
+    if not events:
+        raise HTTPException(status_code=404, detail="No events found for organization")
+
+    # sort by start.utc (fallback to start.local) descending and return first
+    def _start_key(ev: Dict) -> str:
+        st = ev.get("start") or {}
+        return st.get("utc") or st.get("local") or ""
+
+    events_sorted = sorted(events, key=_start_key, reverse=True)
+    latest = events_sorted[0]
+    return latest

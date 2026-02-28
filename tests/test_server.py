@@ -47,27 +47,30 @@ def fake_batch(*args, **kwargs):
 
 
 def test_generate_single_review_and_zip():
-    mod._GENERATOR = {"single": fake_single}
-    client = TestClient(app)
-    files = {"logo": ("logo.png", b"fakepng", "image/png")}
-    data = {
-        "first_name": "Jane",
-        "surname": "Doe",
-        "email": "jane@example.com",
-        "conference_title": "Test Event",
-        "conference_date": "2026-02-27",
-        "review": "true",
-    }
-    r = client.post("/generate", data=data, files=files)
-    assert r.status_code == 200
-    assert r.headers.get("content-type", "").startswith("application/zip")
-    z = zipfile.ZipFile(io.BytesIO(r.content))
-    namelist = z.namelist()
-    assert any(n.endswith(".pdf") for n in namelist)
+    orig_create = mod.create_certificate
+    mod.create_certificate = fake_single
+    try:
+        client = TestClient(app)
+        files = {"logo": ("logo.png", b"fakepng", "image/png")}
+        data = {
+            "first_name": "Jane",
+            "surname": "Doe",
+            "email": "jane@example.com",
+            "conference_title": "Test Event",
+            "conference_date": "2026-02-27",
+            "review": "true",
+        }
+        r = client.post("/generate", data=data, files=files)
+        assert r.status_code == 200
+        assert r.headers.get("content-type", "").startswith("application/zip")
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        namelist = z.namelist()
+        assert any(n.endswith(".pdf") for n in namelist)
+    finally:
+        mod.create_certificate = orig_create
 
 
 def test_generate_single_send_uses_send_emails():
-    mod._GENERATOR = {"single": fake_single}
     captured = {}
 
     def fake_send(
@@ -85,7 +88,9 @@ def test_generate_single_send_uses_send_emails():
         captured["pdf_items"] = pdf_items
 
     orig_send = mod._send_emails
+    orig_create = mod.create_certificate
     mod._send_emails = fake_send
+    mod.create_certificate = fake_single
     try:
         client = TestClient(app)
         data = {
@@ -106,35 +111,48 @@ def test_generate_single_send_uses_send_emails():
         assert len(captured["pdf_items"]) == 1
     finally:
         mod._send_emails = orig_send
+        mod.create_certificate = orig_create
 
 
 def test_generate_csv_batch_review_and_send():
-    mod._GENERATOR = {"batch": fake_batch}
-    client = TestClient(app)
-    csv_content = "name,attendee_email\nTest User,user@example.com\n"
-    files = {"csv_file": ("attendees.csv", csv_content, "text/csv")}
-    data = {
-        "conference_title": "Batch Event",
-        "conference_date": "2026-02-27",
-        "review": "true",
-    }
-    r = client.post("/generate/csv", data=data, files=files)
-    assert r.status_code == 200
-    assert r.headers.get("content-type", "").startswith("application/zip")
-    z = zipfile.ZipFile(io.BytesIO(r.content))
-    assert "test.pdf" in z.namelist()
+    orig_batch = mod.generate_batch
+    mod.generate_batch = fake_batch
+    try:
+        client = TestClient(app)
+        csv_content = "name,attendee_email\nTest User,user@example.com\n"
+        files = {"csv_file": ("attendees.csv", csv_content, "text/csv")}
+        data = {
+            "conference_title": "Batch Event",
+            "conference_date": "2026-02-27",
+            "review": "true",
+        }
+        r = client.post("/generate/csv", data=data, files=files)
+        assert r.status_code == 200
+        assert r.headers.get("content-type", "").startswith("application/zip")
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        assert "test.pdf" in z.namelist()
+    finally:
+        mod.generate_batch = orig_batch
 
 
 def test_generate_csv_invalid_missing_columns():
-    # Ensure batch is not used so the server falls back to CSV parser which validates headers
-    mod._GENERATOR = {"single": fake_single}
-    client = TestClient(app)
-    # Missing email column
-    csv_content = "Attendee first name,Attendee Surname\nAlice,Wonderland\n"
-    files = {"csv_file": ("bad.csv", csv_content, "text/csv")}
-    data = {"conference_title": "Bad Event", "conference_date": "2026-02-27"}
-    r = client.post("/generate/csv", data=data, files=files)
-    assert r.status_code == 422
+    # Mock generate_batch to raise an exception for invalid CSV
+    def fake_batch_error(*args, **kwargs):
+        raise ValueError("CSV missing required columns: email")
+
+    orig_batch = mod.generate_batch
+    mod.generate_batch = fake_batch_error
+    try:
+        client = TestClient(app)
+        # Missing email column
+        csv_content = "Attendee first name,Attendee Surname\nAlice,Wonderland\n"
+        files = {"csv_file": ("bad.csv", csv_content, "text/csv")}
+        data = {"conference_title": "Bad Event", "conference_date": "2026-02-27"}
+        r = client.post("/generate/csv", data=data, files=files)
+        assert r.status_code == 500
+        assert "Batch generation failed" in r.json().get("detail", "")
+    finally:
+        mod.generate_batch = orig_batch
 
 
 def test_send_emails_function_monkeypatch_smtp():
