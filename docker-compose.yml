@@ -1,8 +1,8 @@
 services:
   certify-server:
     build:
-      context: ..
-      dockerfile: certify-serve/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     volumes:
