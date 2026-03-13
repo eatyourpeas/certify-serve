@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Runs the test suite inside the `certify-server` service container.
+# Builds the image, installs pytest, then runs pytest against the mounted source.
+
+SERVICE="certify-server"
+
+echo "Building ${SERVICE} image..."
+docker compose build --pull ${SERVICE}
+
+echo "Running tests inside ${SERVICE} (will install pytest if missing)..."
+docker compose run --rm ${SERVICE} sh -c "python -m pip install --upgrade pip setuptools wheel >/dev/null && python -m pip install pytest httpx >/dev/null && pytest -q"
+
+echo "Tests completed."

@@ -68,6 +68,13 @@ def test_generate_single_review_and_zip():
         assert any(n.endswith(".pdf") for n in namelist)
     finally:
         mod.create_certificate = orig_create
+        # cleanup file created by fake_single when called positionally
+        try:
+            p = Path("2026-02-27")
+            if p.exists():
+                p.unlink()
+        except Exception:
+            pass
 
 
 def test_generate_single_send_uses_send_emails():
@@ -112,6 +119,13 @@ def test_generate_single_send_uses_send_emails():
     finally:
         mod._send_emails = orig_send
         mod.create_certificate = orig_create
+        # cleanup file created by fake_single when called positionally
+        try:
+            p = Path("2026-02-27")
+            if p.exists():
+                p.unlink()
+        except Exception:
+            pass
 
 
 def test_generate_csv_batch_review_and_send():
