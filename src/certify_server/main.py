@@ -64,6 +64,9 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
+# cache generator lookup (declare early so linters/editors don't flag usage)
+_GENERATOR: Optional[callable] = None
+
 
 def _find_generator():
     module = importlib.import_module("certify_attendance")
@@ -270,10 +273,6 @@ def generate_batch(
         email_jobs.append({"recipient": email, "pdf_bytes": pdf, "filename": filename})
     zip_bytes = _create_zip(pdf_items)
     return {"generated": generated, "zip": zip_bytes, "email_jobs": email_jobs}
-
-
-# cache generator lookup
-_GENERATOR = None
 
 
 @app.on_event("startup")
