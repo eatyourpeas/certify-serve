@@ -5,6 +5,7 @@
 **Certify Attendance Server** is a FastAPI-based web service that wraps the `certify-attendance` PyPI package to generate attendance certificates as PDFs. It supports single certificate generation, batch processing via CSV uploads, and direct Eventbrite integration for automated certificate generation from event attendees.
 
 ### Core Capabilities
+
 - Generate individual attendance certificates (PDF)
 - Batch generate certificates from CSV files
 - Integrate with Eventbrite API to fetch attendees and generate certificates automatically
@@ -30,6 +31,7 @@ certify-serve/
 ```
 
 ### Dependencies
+
 - **FastAPI**: Web framework for API endpoints
 - **httpx**: Async HTTP client for Eventbrite API calls
 - **certify_attendance**: External PyPI package that handles PDF generation
@@ -57,6 +59,7 @@ Generate a certificate for one attendee.
 | `send` | boolean | No (default: false) | If true, send emails via SMTP |
 
 **SMTP Fields (required when `send=true`):**
+
 - `smtp_host`: SMTP server hostname
 - `smtp_port`: SMTP port (e.g., 587, 465)
 - `smtp_username`: SMTP username
@@ -67,6 +70,7 @@ Generate a certificate for one attendee.
 - `body`: Email body text
 
 **Response:**
+
 - On `review=true` (default): Returns ZIP file containing PDF certificate(s)
 - On `send=true`: Returns JSON `{"status": "sent", "count": N}`
 
@@ -88,6 +92,7 @@ Generate certificates for multiple attendees from a CSV file.
 | `send` | boolean | No (default: false) | If true, send emails via SMTP |
 
 **CSV Format Requirements:**
+
 - Headers are normalized to lowercase
 - Must include columns for attendee identification:
   - **Name column**: Either `name` (full name) or separate `first_name` + `surname`/`last` columns
@@ -153,6 +158,7 @@ curl -X POST "http://localhost:8000/generate/eventbrite" \
 ```
 
 **Response:**
+
 - On `review=true`: Returns ZIP file containing all attendee certificates
 - On `review=false`: Returns JSON `{"status": "ok", "count": N}`
 
@@ -161,6 +167,7 @@ curl -X POST "http://localhost:8000/generate/eventbrite" \
 ## Eventbrite Workflow (Detailed)
 
 ### Prerequisites
+
 1. **Eventbrite API Token**: Obtain from [Eventbrite Developer Portal](https://www.eventbrite.com/platform/api)
 2. **Event ID**: Found in your Eventbrite event URL or dashboard
 
@@ -237,6 +244,7 @@ The server dynamically discovers the PDF generator function from the `certify_at
 5. `create_certificates`
 
 If none match, it also looks for:
+
 - Functions with "pdf" in the name
 - Classes with `generate`, `create`, or `render` methods
 
@@ -290,11 +298,13 @@ python -m pytest tests/
 ```
 
 ### Test Coverage
+
 - `test_server.py`: Tests for `/generate` and `/generate/csv` endpoints
 - `test_eventbrite.py`: Tests for Eventbrite integration endpoint
 
 ### Mocking Generator in Tests
 The server provides compatibility helpers for testing:
+
 - `create_certificate()`: Single certificate generation
 - `generate_batch()`: Batch certificate generation
 
