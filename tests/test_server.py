@@ -17,7 +17,9 @@ def fake_single(*args, **kwargs):
     # determine output path (kw or positional)
     output_path = kwargs.get("output_path")
     if not output_path:
-        if len(args) >= 5:
+        if len(args) >= 6:
+            output_path = args[5]
+        elif len(args) >= 5:
             output_path = args[4]
         else:
             raise TypeError("missing output_path")
@@ -28,6 +30,8 @@ def fake_single(*args, **kwargs):
 
 def fake_batch(*args, **kwargs):
     # Accept both positional and kw invocation; return generated entries, zip bytes and email jobs
+    # subtitle is now the 4th positional arg or a kwarg
+    _ = kwargs.get("subtitle")  # consume subtitle if provided
     pdf_bytes = b"%PDF-1.4\n%fakebatch\n%%EOF"
     generated = [{"name": "Test User", "filename": "test.pdf", "pdf_bytes": pdf_bytes}]
     buf = io.BytesIO()
@@ -58,6 +62,7 @@ def test_generate_single_review_and_zip():
             "email": "jane@example.com",
             "conference_title": "Test Event",
             "conference_date": "2026-02-27",
+            "subtitle": "Annual Tech Summit 2026",
             "review": "true",
         }
         r = client.post("/generate", data=data, files=files)
@@ -106,6 +111,7 @@ def test_generate_single_send_uses_send_emails():
             "email": "john@example.com",
             "conference_title": "Test Event",
             "conference_date": "2026-02-27",
+            "subtitle": "Annual Tech Summit 2026",
             "send": "true",
             "review": "false",
             "smtp_host": "smtp.example.com",
@@ -138,6 +144,7 @@ def test_generate_csv_batch_review_and_send():
         data = {
             "conference_title": "Batch Event",
             "conference_date": "2026-02-27",
+            "subtitle": "Annual Tech Summit 2026",
             "review": "true",
         }
         r = client.post("/generate/csv", data=data, files=files)
@@ -152,6 +159,7 @@ def test_generate_csv_batch_review_and_send():
 def test_generate_csv_invalid_missing_columns():
     # Mock generate_batch to raise an exception for invalid CSV
     def fake_batch_error(*args, **kwargs):
+        _ = kwargs.get("subtitle")  # consume subtitle if provided
         raise ValueError("CSV missing required columns: email")
 
     orig_batch = mod.generate_batch
@@ -161,7 +169,11 @@ def test_generate_csv_invalid_missing_columns():
         # Missing email column
         csv_content = "Attendee first name,Attendee Surname\nAlice,Wonderland\n"
         files = {"csv_file": ("bad.csv", csv_content, "text/csv")}
-        data = {"conference_title": "Bad Event", "conference_date": "2026-02-27"}
+        data = {
+            "conference_title": "Bad Event",
+            "conference_date": "2026-02-27",
+            "subtitle": "Annual Tech Summit 2026",
+        }
         r = client.post("/generate/csv", data=data, files=files)
         assert r.status_code == 500
         assert "Batch generation failed" in r.json().get("detail", "")

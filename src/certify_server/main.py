@@ -99,20 +99,23 @@ def _call_generator(
     attendees: List[Dict],
     title: str,
     date: str,
+    subtitle: Optional[str] = None,
     logo_bytes: Optional[bytes] = None,
 ):
     try:
-        result = generator(attendees, title=title, date=date, logo=logo_bytes)
+        result = generator(
+            attendees, title=title, date=date, subtitle=subtitle, logo=logo_bytes
+        )
         return _normalize_generator_result(result)
     except TypeError:
         pass
     try:
-        result = generator(attendees, title, date, logo_bytes)
+        result = generator(attendees, title, date, subtitle, logo_bytes)
         return _normalize_generator_result(result)
     except TypeError:
         pass
     try:
-        result = generator(attendees, title, date)
+        result = generator(attendees, title, date, subtitle)
         return _normalize_generator_result(result)
     except Exception as exc:
         raise RuntimeError(f"Generator call failed: {exc}")
@@ -234,6 +237,7 @@ def create_certificate(
     email: str,
     conference_title: str,
     conference_date: str,
+    subtitle: Optional[str] = None,
     output_path: Optional[str] = None,
     logo_bytes: Optional[bytes] = None,
 ):
@@ -241,7 +245,12 @@ def create_certificate(
         raise RuntimeError("certify_attendance generator not available")
     attendees = [{"first_name": first_name, "surname": surname, "email": email}]
     pdf_items = _call_generator(
-        _GENERATOR, attendees, conference_title, conference_date, logo_bytes or None
+        _GENERATOR,
+        attendees,
+        conference_title,
+        conference_date,
+        subtitle,
+        logo_bytes or None,
     )
     if not pdf_items:
         return None
@@ -257,12 +266,18 @@ def generate_batch(
     attendees: List[Dict],
     conference_title: str,
     conference_date: str,
+    subtitle: Optional[str] = None,
     logo_bytes: Optional[bytes] = None,
 ):
     if _GENERATOR is None:
         raise RuntimeError("certify_attendance generator not available")
     pdf_items = _call_generator(
-        _GENERATOR, attendees, conference_title, conference_date, logo_bytes or None
+        _GENERATOR,
+        attendees,
+        conference_title,
+        conference_date,
+        subtitle,
+        logo_bytes or None,
     )
     generated = []
     email_jobs = []
@@ -291,6 +306,7 @@ async def generate_single(
     email: str = Form(...),
     conference_title: str = Form(...),
     conference_date: str = Form(...),
+    subtitle: Optional[str] = Form(None),
     logo: Optional[UploadFile] = File(None),
     review: bool = Form(True),
     send: bool = Form(False),
@@ -315,6 +331,7 @@ async def generate_single(
                 email,
                 conference_title,
                 conference_date,
+                subtitle=subtitle,
                 output_path=tmp.name,
                 logo_bytes=logo_bytes or None,
             )
@@ -339,6 +356,7 @@ async def generate_single(
             email,
             conference_title,
             conference_date,
+            subtitle=subtitle,
             logo_bytes=logo_bytes or None,
         )
         if isinstance(out, str):
@@ -367,6 +385,7 @@ async def generate_single(
         email,
         conference_title,
         conference_date,
+        subtitle=subtitle,
         logo_bytes=logo_bytes or None,
     )
     if isinstance(out, str):
@@ -387,6 +406,7 @@ async def generate_csv(
     csv_file: UploadFile = File(...),
     conference_title: str = Form(...),
     conference_date: str = Form(...),
+    subtitle: Optional[str] = Form(None),
     logo: Optional[UploadFile] = File(None),
     review: bool = Form(True),
     send: bool = Form(False),
@@ -405,7 +425,7 @@ async def generate_csv(
     # Prefer compatibility helper `generate_batch` (tests monkeypatch it)
     try:
         result = generate_batch(
-            attendees, conference_title, conference_date, logo_bytes or None
+            attendees, conference_title, conference_date, subtitle, logo_bytes or None
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Batch generation failed: {exc}")
