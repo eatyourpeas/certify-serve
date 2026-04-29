@@ -12,9 +12,10 @@ import httpx
 import tempfile
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.utils import get_openapi
-
+import os
 
 app = FastAPI(
     title="Certify Attendance Server",
@@ -22,6 +23,42 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+
+# Mount static files for the frontend
+# Use absolute path based on current working directory to work in Docker
+site_dir = os.path.join(os.getcwd(), "site")
+app.mount("/site", StaticFiles(directory=site_dir), name="site")
+
+
+# Inject environment variables into HTML
+def get_env_vars():
+    return {
+        "eventbriteToken": os.environ.get("EVENTBRITE_TOKEN", ""),
+        "smtpHost": os.environ.get("SMTP_HOST", ""),
+        "smtpPort": os.environ.get("SMTP_PORT", ""),
+        "smtpUsername": os.environ.get("SMTP_USERNAME", ""),
+        "smtpPassword": os.environ.get("SMTP_PASSWORD", ""),
+        "fromName": os.environ.get("FROM_NAME", "Conference Team"),
+        "fromEmail": os.environ.get("FROM_EMAIL", "noreply@example.com"),
+    }
+
+
+@app.get("/")
+async def serve_frontend():
+    html_path = os.path.join(site_dir, "index.html")
+    if os.path.exists(html_path):
+        with open(html_path, "r") as f:
+            html = f.read()
+        env_vars = get_env_vars()
+        # Inject environment variables as data attributes
+        data_attrs = " ".join(
+            f'data-{key}="{value}"' for key, value in env_vars.items()
+        )
+        html = html.replace('<html lang="en">', f'<html lang="en" {data_attrs}>')
+        return FileResponse(
+            html_path, media_type="text/html", headers={"Content-Disposition": "inline"}
+        )
+    return FileResponse(html_path)
 
 
 def _clear_examples_in_schema(schema: dict):
@@ -469,6 +506,16 @@ async def generate_eventbrite(
     event_id: str = Form(...),
     eventbrite_token: str = Form(...),
     review: bool = Form(True),
+    status: Optional[str] = Form(None),
+    greeting_type: str = Form("simple"),
+    smtp_host: Optional[str] = Form(None),
+    smtp_port: Optional[int] = Form(None),
+    smtp_username: Optional[str] = Form(None),
+    smtp_password: Optional[str] = Form(None),
+    from_name: str = Form("Conference Team"),
+    from_email: str = Form("noreply@example.com"),
+    subject: str = Form("Your attendance certificate"),
+    body: str = Form("Please find your attendance certificate attached."),
 ):
     base = f"https://www.eventbriteapi.com/v3/events/{event_id}"
     async with httpx.AsyncClient() as client:
@@ -477,27 +524,122 @@ async def generate_eventbrite(
         evj = ev.json()
         title = evj.get("name", {}).get("text", "Event")
         date = evj.get("start", {}).get("local", "")
-        att = await client.get(base + "/attendees/", params={})
+        # Filter attendees by status if provided
+        params = {}
+        if status:
+            params["status"] = status
+        att = await client.get(base + "/attendees/", params=params)
         att.raise_for_status()
         attj = att.json()
         attendees = []
+        attendee_profiles = []
         for a in attj.get("attendees", []):
             profile = a.get("profile", {})
-            attendees.append(
+            attendee_data = {
+                "first_name": profile.get("first_name", ""),
+                "surname": profile.get("last_name", ""),
+                "email": profile.get("email", ""),
+            }
+            attendees.append(attendee_data)
+            # Extract title (honorific) if present
+            honorific = profile.get("honorific", "")
+            attendee_profiles.append(
                 {
-                    "first_name": profile.get("first_name", ""),
-                    "surname": profile.get("last_name", ""),
-                    "email": profile.get("email", ""),
+                    "first_name": attendee_data["first_name"],
+                    "surname": attendee_data["surname"],
+                    "email": attendee_data["email"],
+                    "title": honorific,
                 }
             )
     try:
         result = generate_batch(attendees, title, date)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Batch generation failed: {exc}")
+
     if review:
         return StreamingResponse(
             io.BytesIO(result.get("zip", b"")),
             media_type="application/zip",
             headers={"Content-Disposition": "attachment; filename=certificates.zip"},
         )
+
+    if smtp_host and smtp_port:
+        # Send personalized emails with interpolated attendee data
+        email_jobs = result.get("email_jobs", [])
+        for i, job in enumerate(email_jobs):
+            recipient = job.get("recipient")
+            pdf_bytes = job.get("pdf_bytes")
+            profile = attendee_profiles[i] if i < len(attendee_profiles) else {}
+
+            # Interpolate attendee data into email body based on greeting_type
+            personalized_body = body
+            if greeting_type == "personalized":
+                # Apply all placeholders for full personalization
+                if profile.get("title"):
+                    personalized_body = personalized_body.replace(
+                        "{title}", profile["title"]
+                    )
+                personalized_body = personalized_body.replace(
+                    "{first_name}", profile["first_name"]
+                )
+                personalized_body = personalized_body.replace(
+                    "{surname}", profile["surname"]
+                )
+                personalized_body = personalized_body.replace(
+                    "{full_name}",
+                    f"{profile.get('first_name', '')} {profile.get('surname', '')}".strip(),
+                )
+            elif greeting_type == "title_and_full_name":
+                # Apply title and full name placeholders
+                if profile.get("title"):
+                    personalized_body = personalized_body.replace(
+                        "{title}", profile["title"]
+                    )
+                personalized_body = personalized_body.replace(
+                    "{full_name}",
+                    f"{profile.get('first_name', '')} {profile.get('surname', '')}".strip(),
+                )
+            # "simple" greeting_type: no attendee-specific placeholders
+
+            # Always interpolate event data and email
+            personalized_body = personalized_body.replace("{email}", recipient)
+            personalized_body = personalized_body.replace("{event_title}", title)
+            personalized_body = personalized_body.replace("{event_date}", date)
+
+            # Send email
+            msg = EmailMessage()
+            msg["From"] = f"{from_name} <{from_email}>"
+            msg["To"] = recipient
+            msg["Subject"] = subject
+            msg.set_content(personalized_body)
+            msg.add_attachment(
+                pdf_bytes,
+                maintype="application",
+                subtype="pdf",
+                filename="certificate.pdf",
+            )
+
+            backend = os.environ.get("SMTP_BACKEND")
+            logger = logging.getLogger(__name__)
+            if backend == "console":
+                print(
+                    f"TO: {recipient}\nSUBJECT: {subject}\n{personalized_body}\n[PDF {len(pdf_bytes)} bytes]\n"
+                )
+                logger.info("Sent console email to %s", recipient)
+            else:
+                use_ssl = smtp_port == 465
+                if use_ssl:
+                    server = smtplib.SMTP_SSL(smtp_host, smtp_port)
+                else:
+                    server = smtplib.SMTP(smtp_host, smtp_port)
+                    server.starttls()
+                try:
+                    if smtp_username and smtp_password:
+                        server.login(smtp_username, smtp_password)
+                    server.send_message(msg)
+                finally:
+                    server.quit()
+
+        return {"status": "sent", "count": len(email_jobs)}
+
     return {"status": "ok", "count": len(result.get("generated", []))}

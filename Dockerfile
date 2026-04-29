@@ -4,6 +4,7 @@ WORKDIR /app
 # Install build deps and runtime deps declared in pyproject
 COPY pyproject.toml /app/
 COPY src/ /app/src/
+COPY site/ /app/site/
 
 RUN pip install --upgrade pip setuptools wheel \
     && pip install .[default] || true \

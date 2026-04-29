@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eventbrite Certificate Generator</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        input[type="text"],
+        input[type="email"],
+        textarea,
+        select {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        input[type="text"]:focus,
+        input[type="email"]:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+            font-family: inherit;
+        }
+        .row {
+            display: flex;
+            gap: 15px;
+        }
+        .col {
+            flex: 1;
+        }
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        .checkbox-group label {
+            margin-bottom: 0;
+            cursor: pointer;
+        }
+        button {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .status.show {
+            display: block;
+        }
+        .helper-text {
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+        }
+        .section-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #888;
+            margin: 30px 0 15px 0;
+            font-weight: 600;
+        }
+        select {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 15px center;
+            padding-right: 40px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎓 Certificate Generator</h1>
+        <p class="subtitle">Generate attendance certificates from your Eventbrite event</p>
+
+        <form id="certificateForm">
+            <div class="form-group">
+                <label for="eventId">Eventbrite Event ID *</label>
+                <input type="text" id="eventId" name="event_id" required placeholder="e.g., 1984053600729">
+                <p class="helper-text">Found in your Eventbrite event URL or dashboard</p>
+            </div>
+
+            <div class="section-title">Email Settings</div>
+
+            <div class="row">
+                <div class="col">
+                    <div class="form-group">
+                        <label for="fromName">From Name</label>
+                        <input type="text" id="fromName" name="from_name" value="Conference Team" placeholder="Conference Team">
+                    </div>
+                </div>
+                <div class="col">
+                    <div class="form-group">
+                        <label for="fromEmail">From Email</label>
+                        <input type="email" id="fromEmail" name="from_email" value="noreply@example.com" placeholder="noreply@example.com">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="subject">Email Subject</label>
+                <input type="text" id="subject" name="subject" value="Your attendance certificate" placeholder="Your attendance certificate">
+            </div>
+
+            <div class="form-group">
+                <label for="body">Email Body</label>
+                <textarea id="body" name="body" placeholder="Thank you for attending our event. Please find your certificate attached.">Thank you for attending our event. Please find your certificate attached.</textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="greetingType">Greeting Style</label>
+                <select id="greetingType" name="greeting_type">
+                    <option value="simple">Simple (No personalized greeting)</option>
+                    <option value="title_and_full_name">Title and Full Name ({title} and {full_name})</option>
+                    <option value="personalized">Personalized (All placeholders: {title}, {first_name}, {surname}, {full_name})</option>
+                </select>
+                <p class="helper-text">Placeholders will be replaced with attendee data when sending emails</p>
+            </div>
+
+            <div class="section-title">Options</div>
+
+            <div class="form-group">
+                <label for="statusFilter">Filter Attendees By Status</label>
+                <select id="statusFilter" name="status">
+                    <option value="">All Attendees (Default)</option>
+                    <option value="attended">Attended Only</option>
+                    <option value="registered">Registered</option>
+                    <option value="declined">Declined</option>
+                    <option value="waitlisted">Waitlisted</option>
+                </select>
+                <p class="helper-text">Leave blank to include all attendees</p>
+            </div>
+
+            <div class="form-group checkbox-group">
+                <input type="checkbox" id="review" name="review" checked>
+                <label for="review">Download ZIP for review (don't send emails)</label>
+            </div>
+
+            <button type="submit" id="submitBtn">Generate Certificates</button>
+        </form>
+
+        <div id="status" class="status"></div>
+    </div>
+
+    <script>
+        const form = document.getElementById('certificateForm');
+        const statusEl = document.getElementById('status');
+        const submitBtn = document.getElementById('submitBtn');
+
+        // Load credentials from environment variables
+        const CREDENTIALS = {
+            eventbriteToken: document.documentElement.dataset.eventbriteToken || '',
+            smtpHost: document.documentElement.dataset.smtpHost || '',
+            smtpPort: document.documentElement.dataset.smtpPort || '',
+            smtpUsername: document.documentElement.dataset.smtpUsername || '',
+            smtpPassword: document.documentElement.dataset.smtpPassword || '',
+            fromName: document.documentElement.dataset.fromName || 'Conference Team',
+            fromEmail: document.documentElement.dataset.fromEmail || 'noreply@example.com'
+        };
+
+        // Pre-fill form with credentials if available
+        if (CREDENTIALS.fromName) document.getElementById('fromName').value = CREDENTIALS.fromName;
+        if (CREDENTIALS.fromEmail) document.getElementById('fromEmail').value = CREDENTIALS.fromEmail;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData(form);
+            
+            // Add greeting type to form data
+            const greetingType = document.getElementById('greetingType').value;
+            formData.append('greeting_type', greetingType);
+            
+            // Add SMTP credentials if not in review mode
+            if (!formData.get('review')) {
+                formData.append('smtp_host', CREDENTIALS.smtpHost);
+                formData.append('smtp_port', CREDENTIALS.smtpPort);
+                formData.append('smtp_username', CREDENTIALS.smtpUsername);
+                formData.append('smtp_password', CREDENTIALS.smtpPassword);
+            }
+
+            showStatus('info', 'Generating certificates...');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Processing...';
+
+            try {
+                const response = await fetch('/generate/eventbrite', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to generate certificates');
+                }
+
+                const contentType = response.headers.get('content-type');
+                
+                if (contentType && contentType.includes('application/json')) {
+                    const result = await response.json();
+                    showStatus('success', `Successfully generated ${result.count} certificates!`);
+                } else {
+                    // Download ZIP file
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'certificates.zip';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                    showStatus('success', 'Certificates downloaded successfully!');
+                }
+            } catch (error) {
+                showStatus('error', error.message);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Generate Certificates';
+            }
+        });
+
+        function showStatus(type, message) {
+            statusEl.className = `status ${type} show`;
+            statusEl.textContent = message;
+        }
+    </script>
+</body>
+</html>
