@@ -17,12 +17,31 @@
             padding: 40px 20px;
         }
         .container {
-            max-width: 600px;
+            max-width: 1100px;
             margin: 0 auto;
             background: white;
             border-radius: 16px;
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
             padding: 40px;
+        }
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 16px;
+        }
+        .card {
+            border: 1px solid #ececec;
+            border-radius: 12px;
+            padding: 14px;
+            background: #fcfcfc;
+        }
+        .card-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #666;
+            margin-bottom: 12px;
+            font-weight: 700;
         }
         h1 {
             color: #333;
@@ -113,6 +132,40 @@
             cursor: not-allowed;
             transform: none;
         }
+        .button-row {
+            display: flex;
+            gap: 10px;
+        }
+        .button-row button {
+            width: auto;
+            flex: 1;
+        }
+        .logo-preview {
+            margin-top: 12px;
+            padding: 10px;
+            border: 1px dashed #d0d0d0;
+            border-radius: 8px;
+            background: #fafafa;
+            display: none;
+        }
+        .logo-preview.show {
+            display: block;
+        }
+        .logo-preview img {
+            max-width: 100%;
+            max-height: 140px;
+            display: block;
+            margin: 0 auto;
+            border-radius: 6px;
+            border: 1px solid #e6e6e6;
+            background: white;
+        }
+        .logo-preview .meta {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #666;
+            text-align: center;
+        }
         .status {
             margin-top: 20px;
             padding: 15px;
@@ -137,6 +190,115 @@
         .status.show {
             display: block;
         }
+        .attendees-panel {
+            margin-top: 24px;
+            border: 1px solid #e6e6e6;
+            border-radius: 10px;
+            padding: 14px;
+            display: none;
+            background: #fcfcfc;
+        }
+        .attendees-panel.show {
+            display: block;
+        }
+        .attendees-toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        .attendees-toolbar button {
+            width: auto;
+            flex: 1;
+            min-width: 170px;
+            padding: 10px 12px;
+            font-size: 14px;
+        }
+        .attendees-table-wrap {
+            overflow-x: auto;
+        }
+        .attendees-pagination {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .attendees-pagination button {
+            width: auto;
+            padding: 8px 12px;
+            font-size: 13px;
+        }
+        .attendees-pagination .page-info {
+            font-size: 12px;
+            color: #666;
+        }
+        table.attendees {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        table.attendees th,
+        table.attendees td {
+            border-bottom: 1px solid #ececec;
+            padding: 8px;
+            text-align: left;
+            vertical-align: middle;
+        }
+        table.attendees th {
+            background: #f6f7fb;
+            position: sticky;
+            top: 0;
+        }
+        .row-actions {
+            display: flex;
+            gap: 6px;
+        }
+        .row-actions button {
+            width: auto;
+            padding: 6px 8px;
+            font-size: 12px;
+        }
+        .delivery-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            font-size: 12px;
+            border: 1px solid #ddd;
+            background: #fff;
+            white-space: nowrap;
+        }
+        .delivery-idle {
+            color: #666;
+        }
+        .delivery-sending {
+            color: #0c5460;
+            border-color: #bee5eb;
+            background: #eaf7fa;
+        }
+        .delivery-success {
+            color: #155724;
+            border-color: #c3e6cb;
+            background: #e8f6eb;
+        }
+        .delivery-error {
+            color: #721c24;
+            border-color: #f5c6cb;
+            background: #fdeced;
+        }
+        .spinner {
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(0, 0, 0, 0.12);
+            border-top-color: #0c5460;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
         .helper-text {
             font-size: 12px;
             color: #888;
@@ -157,6 +319,38 @@
             background-position: right 15px center;
             padding-right: 40px;
         }
+        .smtp-toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            color: #555;
+            font-weight: 600;
+            user-select: none;
+            margin-top: 12px;
+            padding: 6px 0;
+            border-top: 1px solid #eee;
+        }
+        .smtp-toggle svg {
+            transition: transform 0.2s;
+            flex-shrink: 0;
+        }
+        .smtp-toggle.open svg {
+            transform: rotate(90deg);
+        }
+        .smtp-fields {
+            display: none;
+            margin-top: 8px;
+        }
+        .smtp-fields.open {
+            display: block;
+        }
+        @media (max-width: 960px) {
+            .cards-grid {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
@@ -165,70 +359,163 @@
         <p class="subtitle">Generate attendance certificates from your Eventbrite event</p>
 
         <form id="certificateForm">
-            <div class="form-group">
-                <label for="eventId">Eventbrite Event ID *</label>
-                <input type="text" id="eventId" name="event_id" required placeholder="e.g., 1984053600729">
-                <p class="helper-text">Found in your Eventbrite event URL or dashboard</p>
-            </div>
-
-            <div class="section-title">Email Settings</div>
-
-            <div class="row">
-                <div class="col">
+            <div class="cards-grid">
+                <div class="card">
+                    <div class="card-title">Eventbrite Credentials</div>
                     <div class="form-group">
-                        <label for="fromName">From Name</label>
-                        <input type="text" id="fromName" name="from_name" value="Conference Team" placeholder="Conference Team">
+                        <label for="eventId">Eventbrite Event ID *</label>
+                        <input type="text" id="eventId" name="event_id" required placeholder="e.g., 1984053600729">
+                        <p class="helper-text">Found in your Eventbrite event URL or dashboard</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="eventbriteToken">Eventbrite API Token</label>
+                        <input type="text" id="eventbriteToken" name="eventbrite_token" placeholder="Leave blank to use server EVENTBRITE_TOKEN">
+                        <p class="helper-text">Overrides the server-side <code>EVENTBRITE_TOKEN</code> env var when provided</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="statusFilter">Filter Attendees By Status</label>
+                        <select id="statusFilter" name="status">
+                            <option value="">All Attendees (Default)</option>
+                            <option value="attended">Attended Only</option>
+                            <option value="registered">Registered</option>
+                            <option value="declined">Declined</option>
+                            <option value="waitlisted">Waitlisted</option>
+                        </select>
+                        <p class="helper-text">Load attendees after setting filters.</p>
+                    </div>
+                    <div class="button-row">
+                        <button type="button" id="previewBtn">Preview Event Metadata</button>
                     </div>
                 </div>
-                <div class="col">
+
+                <div class="card">
+                    <div class="card-title">Certificate Details</div>
                     <div class="form-group">
-                        <label for="fromEmail">From Email</label>
-                        <input type="email" id="fromEmail" name="from_email" value="noreply@example.com" placeholder="noreply@example.com">
+                        <label for="conferenceTitle">Certificate Event Title (optional override)</label>
+                        <input type="text" id="conferenceTitle" name="conference_title" placeholder="Leave blank to use Eventbrite event title">
+                    </div>
+                    <div class="form-group">
+                        <label for="conferenceDate">Certificate Event Date (optional override)</label>
+                        <input type="text" id="conferenceDate" name="conference_date" placeholder="Leave blank to use Eventbrite event date">
+                    </div>
+                    <div class="form-group">
+                        <label for="conferenceSubtitle">Certificate Subtitle (optional override)</label>
+                        <input type="text" id="conferenceSubtitle" name="subtitle" placeholder="Leave blank to use Eventbrite summary">
+                    </div>
+                    <div class="form-group">
+                        <label for="conferenceLocation">Certificate Location (optional override)</label>
+                        <input type="text" id="conferenceLocation" name="location" placeholder="Leave blank to use Eventbrite venue">
+                    </div>
+                    <div class="form-group">
+                        <label for="logoFile">Certificate Logo (optional)</label>
+                        <input type="file" id="logoFile" name="logo" accept="image/*">
+                        <p class="helper-text">If omitted, the generator package default logo/template is used. For best centering, use a square PNG (around 600x600+).</p>
+                        <div id="logoPreview" class="logo-preview">
+                            <img id="logoPreviewImage" alt="Selected logo preview">
+                            <div id="logoPreviewMeta" class="meta"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Email Details</div>
+                    <div class="row">
+                        <div class="col">
+                            <div class="form-group">
+                                <label for="fromName">From Name</label>
+                                <input type="text" id="fromName" name="from_name" value="Conference Team" placeholder="Conference Team">
+                            </div>
+                        </div>
+                        <div class="col">
+                            <div class="form-group">
+                                <label for="fromEmail">From Email</label>
+                                <input type="email" id="fromEmail" name="from_email" value="noreply@example.com" placeholder="noreply@example.com">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="subject">Email Subject</label>
+                        <input type="text" id="subject" name="subject" value="Your attendance certificate" placeholder="Your attendance certificate">
+                    </div>
+                    <div class="form-group">
+                        <label for="body">Email Body</label>
+                        <textarea id="body" name="body" placeholder="Thank you for attending our event. Please find your certificate attached.">Thank you for attending our event. Please find your certificate attached.</textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="greetingType">Greeting Style</label>
+                        <select id="greetingType" name="greeting_type">
+                            <option value="simple">Simple (No personalized greeting)</option>
+                            <option value="title_and_full_name">Title and Full Name ({title} and {full_name})</option>
+                            <option value="personalized">Personalized (All placeholders: {title}, {first_name}, {surname}, {full_name})</option>
+                        </select>
+                        <p class="helper-text">Placeholders are replaced per attendee when sending.</p>
+                    </div>
+                    <div class="smtp-toggle" id="smtpToggle">
+                        <svg width="10" height="10" viewBox="0 0 10 10"><path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        Override SMTP server settings
+                    </div>
+                    <div class="smtp-fields" id="smtpFields">
+                        <p class="helper-text" style="margin-bottom:10px;">Leave blank to use server-side env vars. Values here override the backend credentials for this session.</p>
+                        <div class="row">
+                            <div class="col">
+                                <div class="form-group">
+                                    <label for="smtpHost">SMTP Host</label>
+                                    <input type="text" id="smtpHost" placeholder="e.g. smtp.example.com">
+                                </div>
+                            </div>
+                            <div class="col">
+                                <div class="form-group">
+                                    <label for="smtpPort">SMTP Port</label>
+                                    <input type="number" id="smtpPort" placeholder="587">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col">
+                                <div class="form-group">
+                                    <label for="smtpUsername">SMTP Username</label>
+                                    <input type="text" id="smtpUsername" autocomplete="off" placeholder="username@example.com">
+                                </div>
+                            </div>
+                            <div class="col">
+                                <div class="form-group">
+                                    <label for="smtpPassword">SMTP Password</label>
+                                    <input type="password" id="smtpPassword" autocomplete="new-password" placeholder="••••••••">
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
-
-            <div class="form-group">
-                <label for="subject">Email Subject</label>
-                <input type="text" id="subject" name="subject" value="Your attendance certificate" placeholder="Your attendance certificate">
-            </div>
-
-            <div class="form-group">
-                <label for="body">Email Body</label>
-                <textarea id="body" name="body" placeholder="Thank you for attending our event. Please find your certificate attached.">Thank you for attending our event. Please find your certificate attached.</textarea>
-            </div>
-
-            <div class="form-group">
-                <label for="greetingType">Greeting Style</label>
-                <select id="greetingType" name="greeting_type">
-                    <option value="simple">Simple (No personalized greeting)</option>
-                    <option value="title_and_full_name">Title and Full Name ({title} and {full_name})</option>
-                    <option value="personalized">Personalized (All placeholders: {title}, {first_name}, {surname}, {full_name})</option>
-                </select>
-                <p class="helper-text">Placeholders will be replaced with attendee data when sending emails</p>
-            </div>
-
-            <div class="section-title">Options</div>
-
-            <div class="form-group">
-                <label for="statusFilter">Filter Attendees By Status</label>
-                <select id="statusFilter" name="status">
-                    <option value="">All Attendees (Default)</option>
-                    <option value="attended">Attended Only</option>
-                    <option value="registered">Registered</option>
-                    <option value="declined">Declined</option>
-                    <option value="waitlisted">Waitlisted</option>
-                </select>
-                <p class="helper-text">Leave blank to include all attendees</p>
-            </div>
-
-            <div class="form-group checkbox-group">
-                <input type="checkbox" id="review" name="review" checked>
-                <label for="review">Download ZIP for review (don't send emails)</label>
-            </div>
-
-            <button type="submit" id="submitBtn">Generate Certificates</button>
         </form>
+
+        <div id="attendeesPanel" class="attendees-panel">
+            <div class="attendees-toolbar">
+                <span id="selectedCount" style="font-size:13px;color:#666;"></span>
+                <button type="button" id="generateSelectedBtn">Generate ZIP for Selected</button>
+                <button type="button" id="sendSelectedBtn">Send All Selected</button>
+            </div>
+            <div class="attendees-table-wrap">
+                <table class="attendees">
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" id="selectAllAttendees" checked></th>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Status</th>
+                            <th>Delivery</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="attendeesBody"></tbody>
+                </table>
+            </div>
+            <div class="attendees-pagination">
+                <button type="button" id="prevPageBtn">Previous 15</button>
+                <span id="pageInfo" class="page-info">Page 1 of 1</span>
+                <button type="button" id="nextPageBtn">Next 15</button>
+            </div>
+        </div>
 
         <div id="status" class="status"></div>
     </div>
@@ -236,7 +523,24 @@
     <script>
         const form = document.getElementById('certificateForm');
         const statusEl = document.getElementById('status');
-        const submitBtn = document.getElementById('submitBtn');
+        const previewBtn = document.getElementById('previewBtn');
+        const logoInput = document.getElementById('logoFile');
+        const logoPreview = document.getElementById('logoPreview');
+        const logoPreviewImage = document.getElementById('logoPreviewImage');
+        const logoPreviewMeta = document.getElementById('logoPreviewMeta');
+        const attendeesPanel = document.getElementById('attendeesPanel');
+        const attendeesBody = document.getElementById('attendeesBody');
+        const selectAllAttendees = document.getElementById('selectAllAttendees');
+        const generateSelectedBtn = document.getElementById('generateSelectedBtn');
+        const sendSelectedBtn = document.getElementById('sendSelectedBtn');
+        const selectedCountEl = document.getElementById('selectedCount');
+        const prevPageBtn = document.getElementById('prevPageBtn');
+        const nextPageBtn = document.getElementById('nextPageBtn');
+        const pageInfo = document.getElementById('pageInfo');
+        let logoPreviewUrl = null;
+        let attendeeRows = [];
+        const attendeesPageSize = 15;
+        let attendeesPage = 1;
 
         // Load credentials from environment variables
         const CREDENTIALS = {
@@ -250,65 +554,351 @@
         };
 
         // Pre-fill form with credentials if available
+        if (CREDENTIALS.eventbriteToken) document.getElementById('eventbriteToken').value = CREDENTIALS.eventbriteToken;
         if (CREDENTIALS.fromName) document.getElementById('fromName').value = CREDENTIALS.fromName;
         if (CREDENTIALS.fromEmail) document.getElementById('fromEmail').value = CREDENTIALS.fromEmail;
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const formData = new FormData(form);
-            
-            // Add greeting type to form data
-            const greetingType = document.getElementById('greetingType').value;
-            formData.append('greeting_type', greetingType);
-            
-            // Add SMTP credentials if not in review mode
-            if (!formData.get('review')) {
-                formData.append('smtp_host', CREDENTIALS.smtpHost);
-                formData.append('smtp_port', CREDENTIALS.smtpPort);
-                formData.append('smtp_username', CREDENTIALS.smtpUsername);
-                formData.append('smtp_password', CREDENTIALS.smtpPassword);
+        function getSelectedEmails() {
+            return attendeeRows
+                .filter(a => a.selected)
+                .map(a => a.email)
+                .filter(Boolean);
+        }
+
+        function deliveryBadge(row) {
+            const state = row.deliveryState || 'idle';
+            const title = row.deliveryMessage || '';
+            if (state === 'sending') {
+                return `<span class="delivery-badge delivery-sending" title="${title}"><span class="spinner"></span>Sending</span>`;
+            }
+            if (state === 'success') {
+                return `<span class="delivery-badge delivery-success" title="${title}">OK Sent</span>`;
+            }
+            if (state === 'error') {
+                return `<span class="delivery-badge delivery-error" title="${title}">! Failed</span>`;
+            }
+            return `<span class="delivery-badge delivery-idle">Not sent</span>`;
+        }
+
+        function setDeliveryStateByEmail(email, state, message = '') {
+            const target = attendeeRows.find(r => (r.email || '').toLowerCase() === (email || '').toLowerCase());
+            if (!target) return;
+            target.deliveryState = state;
+            target.deliveryMessage = message;
+        }
+
+        function renderAttendees() {
+            attendeesBody.innerHTML = '';
+            const totalPages = Math.max(1, Math.ceil(attendeeRows.length / attendeesPageSize));
+            attendeesPage = Math.min(Math.max(1, attendeesPage), totalPages);
+            const start = (attendeesPage - 1) * attendeesPageSize;
+            const pageRows = attendeeRows
+                .map((row, idx) => ({ row, idx }))
+                .slice(start, start + attendeesPageSize);
+
+            pageRows.forEach(({ row, idx }) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><input type="checkbox" data-index="${idx}" class="attendee-check" ${row.selected ? 'checked' : ''}></td>
+                    <td>${(row.first_name || '')} ${(row.surname || '')}</td>
+                    <td>${row.email || ''}</td>
+                    <td>${row.status || (row.checked_in ? 'checked_in' : '')}</td>
+                    <td>${deliveryBadge(row)}</td>
+                    <td>
+                        <div class="row-actions">
+                            <button type="button" class="row-generate" data-index="${idx}">Generate</button>
+                            <button type="button" class="row-send" data-index="${idx}">Send</button>
+                        </div>
+                    </td>
+                `;
+                attendeesBody.appendChild(tr);
+            });
+
+            prevPageBtn.disabled = attendeesPage <= 1;
+            nextPageBtn.disabled = attendeesPage >= totalPages;
+            pageInfo.textContent = `Page ${attendeesPage} of ${totalPages} (${attendeeRows.length} attendees)`;
+            const numSelected = attendeeRows.filter(a => a.selected).length;
+            selectedCountEl.textContent = `${numSelected} of ${attendeeRows.length} selected`;
+
+            attendeesBody.querySelectorAll('.attendee-check').forEach(el => {
+                el.addEventListener('change', (e) => {
+                    const idx = Number(e.target.dataset.index);
+                    attendeeRows[idx].selected = e.target.checked;
+                });
+            });
+            attendeesBody.querySelectorAll('.row-generate').forEach(el => {
+                el.addEventListener('click', async (e) => {
+                    const idx = Number(e.target.dataset.index);
+                    await submitForSelection([attendeeRows[idx].email], false);
+                });
+            });
+            attendeesBody.querySelectorAll('.row-send').forEach(el => {
+                el.addEventListener('click', async (e) => {
+                    const idx = Number(e.target.dataset.index);
+                    await sendSingleAttendee(attendeeRows[idx]);
+                });
+            });
+        }
+
+        selectAllAttendees.addEventListener('change', () => {
+            const checked = selectAllAttendees.checked;
+            attendeeRows = attendeeRows.map(a => ({ ...a, selected: checked }));
+            renderAttendees();
+        });
+
+        prevPageBtn.addEventListener('click', () => {
+            attendeesPage = Math.max(1, attendeesPage - 1);
+            renderAttendees();
+        });
+
+        nextPageBtn.addEventListener('click', () => {
+            const totalPages = Math.max(1, Math.ceil(attendeeRows.length / attendeesPageSize));
+            attendeesPage = Math.min(totalPages, attendeesPage + 1);
+            renderAttendees();
+        });
+
+        logoInput.addEventListener('change', () => {
+            const file = logoInput.files && logoInput.files[0];
+            if (!file) {
+                if (logoPreviewUrl) {
+                    URL.revokeObjectURL(logoPreviewUrl);
+                    logoPreviewUrl = null;
+                }
+                logoPreview.classList.remove('show');
+                logoPreviewImage.removeAttribute('src');
+                logoPreviewMeta.textContent = '';
+                return;
+            }
+            if (!file.type.startsWith('image/')) {
+                showStatus('error', 'Please select an image file for the logo.');
+                logoInput.value = '';
+                return;
             }
 
-            showStatus('info', 'Generating certificates...');
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Processing...';
+            if (logoPreviewUrl) {
+                URL.revokeObjectURL(logoPreviewUrl);
+            }
+            logoPreviewUrl = URL.createObjectURL(file);
+            logoPreviewImage.src = logoPreviewUrl;
+            logoPreviewMeta.textContent = `${file.name} (${Math.round(file.size / 1024)} KB)`;
+            logoPreview.classList.add('show');
+        });
 
+        previewBtn.addEventListener('click', async () => {
+            const eventId = document.getElementById('eventId').value.trim();
+            const eventbriteToken = document.getElementById('eventbriteToken').value.trim() || CREDENTIALS.eventbriteToken;
+
+            if (!eventId) {
+                showStatus('error', 'Event ID is required to preview event metadata.');
+                return;
+            }
+            // Token may be blank — server will fall back to EVENTBRITE_TOKEN env var.
+
+            previewBtn.disabled = true;
+            showStatus('info', 'Fetching Eventbrite metadata...');
+
+            try {
+                const previewData = new FormData();
+                previewData.set('event_id', eventId);
+                if (eventbriteToken) previewData.set('eventbrite_token', eventbriteToken);
+
+                let response = await fetch('/generate/eventbrite/preview', {
+                    method: 'POST',
+                    body: previewData
+                });
+
+                // Fallback for environments with stale redirects/routing rules.
+                if (response.status === 405) {
+                    response = await fetch('/generate/eventbrite/preview/', {
+                        method: 'POST',
+                        body: previewData
+                    });
+                }
+                if (response.status === 405) {
+                    const qs = new URLSearchParams({
+                        event_id: eventId,
+                        eventbrite_token: eventbriteToken
+                    }).toString();
+                    response = await fetch(`/generate/eventbrite/preview?${qs}`, {
+                        method: 'GET'
+                    });
+                }
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to fetch event metadata');
+                }
+
+                const result = await response.json();
+                if (result.conference_title) document.getElementById('conferenceTitle').value = result.conference_title;
+                if (result.conference_date) document.getElementById('conferenceDate').value = result.conference_date;
+                if (result.subtitle) document.getElementById('conferenceSubtitle').value = result.subtitle;
+                if (result.location) document.getElementById('conferenceLocation').value = result.location;
+
+                const attendeeData = new FormData();
+                attendeeData.set('event_id', eventId);
+                if (eventbriteToken) attendeeData.set('eventbrite_token', eventbriteToken);
+                const status = document.getElementById('statusFilter').value;
+                if (status) attendeeData.set('status', status);
+                const attendeeResp = await fetch('/generate/eventbrite/attendees', {
+                    method: 'POST',
+                    body: attendeeData
+                });
+                if (!attendeeResp.ok) {
+                    const error = await attendeeResp.json();
+                    throw new Error(error.detail || 'Failed to fetch attendees');
+                }
+                const attendeeResult = await attendeeResp.json();
+                attendeeRows = (attendeeResult.attendees || []).map(a => ({ ...a, selected: true }));
+                attendeeRows.sort((a, b) => (a.surname || '').localeCompare(b.surname || ''));
+                attendeesPage = 1;
+                selectAllAttendees.checked = true;
+                renderAttendees();
+                attendeesPanel.classList.add('show');
+
+                showStatus('success', `Loaded event metadata and ${attendeeRows.length} attendees.`);
+            } catch (error) {
+                showStatus('error', error.message);
+            } finally {
+                previewBtn.disabled = false;
+            }
+        });
+
+        async function submitForSelection(selectedEmails, sendMode, silent = false) {
+            if (!selectedEmails.length) {
+                if (!silent) showStatus('error', 'No attendees selected.');
+                return { ok: false, error: 'No attendees selected' };
+            }
+
+            const formData = new FormData(form);
+            // Pass token only if the field has a value; server falls back to env var.
+            const tokenFieldVal = (document.getElementById('eventbriteToken').value || '').trim();
+            if (tokenFieldVal) formData.set('eventbrite_token', tokenFieldVal);
+            else formData.delete('eventbrite_token');
+            formData.set('greeting_type', document.getElementById('greetingType').value);
+            formData.set('selected_emails', JSON.stringify(selectedEmails));
+            formData.set('send', sendMode ? 'true' : 'false');
+            formData.set('review', sendMode ? 'false' : 'true');
+
+            // Always remove the eventbrite_token the FormData collected from the field
+            // if it's blank — we set it correctly above already.
+            if (!(document.getElementById('eventbriteToken').value || '').trim()) {
+                formData.delete('eventbrite_token');
+            }
+
+            if (sendMode) {
+                // Read override SMTP fields from the collapsible form section.
+                // Falls back to server-side env vars when blank.
+                const smtpHost = (document.getElementById('smtpHost').value || '').trim();
+                const smtpPort = (document.getElementById('smtpPort').value || '').trim();
+                const smtpUsername = (document.getElementById('smtpUsername').value || '').trim();
+                const smtpPassword = (document.getElementById('smtpPassword').value || '').trim();
+                if (smtpHost) formData.set('smtp_host', smtpHost);
+                if (smtpPort) formData.set('smtp_port', smtpPort);
+                if (smtpUsername) formData.set('smtp_username', smtpUsername);
+                if (smtpPassword) formData.set('smtp_password', smtpPassword);
+            }
+
+            if (!silent) showStatus('info', sendMode ? 'Sending certificates...' : 'Generating selected certificates...');
             try {
                 const response = await fetch('/generate/eventbrite', {
                     method: 'POST',
                     body: formData
                 });
-
                 if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.detail || 'Failed to generate certificates');
+                    let detail = `HTTP ${response.status}`;
+                    try {
+                        const err = await response.json();
+                        detail = Array.isArray(err.detail)
+                            ? err.detail.map(e => e.msg || JSON.stringify(e)).join('; ')
+                            : (err.detail || detail);
+                    } catch (_) {}
+                    throw new Error(detail);
                 }
 
                 const contentType = response.headers.get('content-type');
-                
                 if (contentType && contentType.includes('application/json')) {
                     const result = await response.json();
-                    showStatus('success', `Successfully generated ${result.count} certificates!`);
+                    if (!silent) showStatus('success', `Processed ${result.count} certificates.`);
+                    return { ok: true, json: result };
                 } else {
-                    // Download ZIP file
                     const blob = await response.blob();
                     const url = window.URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = 'certificates.zip';
+                    a.download = 'certificates-selected.zip';
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
                     window.URL.revokeObjectURL(url);
-                    showStatus('success', 'Certificates downloaded successfully!');
+                    if (!silent) showStatus('success', 'Selected certificates downloaded successfully.');
+                    return { ok: true, zip: true };
                 }
             } catch (error) {
-                showStatus('error', error.message);
-            } finally {
-                submitBtn.disabled = false;
-                submitBtn.textContent = 'Generate Certificates';
+                if (!silent) showStatus('error', error.message);
+                return { ok: false, error: error.message };
             }
+        }
+
+        async function sendSingleAttendee(row) {
+            if (!row || !row.email) return;
+            setDeliveryStateByEmail(row.email, 'sending', 'Sending certificate email');
+            renderAttendees();
+
+            const result = await submitForSelection([row.email], true, false);
+            if (!result.ok) {
+                setDeliveryStateByEmail(row.email, 'error', result.error || 'Send failed');
+                renderAttendees();
+                return false;
+            }
+
+            const failures = (result.json && result.json.failures) || [];
+            const rowFailure = failures.find(f => (f.email || '').toLowerCase() === row.email.toLowerCase());
+            if (rowFailure) {
+                setDeliveryStateByEmail(row.email, 'error', rowFailure.error || 'Send failed');
+                renderAttendees();
+                return false;
+            }
+
+            setDeliveryStateByEmail(row.email, 'success', 'Email sent successfully');
+            renderAttendees();
+            return true;
+        }
+
+        generateSelectedBtn.addEventListener('click', async () => {
+            await submitForSelection(getSelectedEmails(), false);
+        });
+
+        sendSelectedBtn.addEventListener('click', async () => {
+            const selectedRows = attendeeRows.filter(a => a.selected && a.email);
+            if (!selectedRows.length) {
+                showStatus('error', 'No attendees selected.');
+                return;
+            }
+
+            let sent = 0;
+            let failed = 0;
+            showStatus('info', `Sending ${selectedRows.length} emails...`);
+            for (const row of selectedRows) {
+                const ok = await sendSingleAttendee(row);
+                if (ok) sent += 1;
+                else failed += 1;
+            }
+            if (failed) {
+                showStatus('error', `Send complete: ${sent} sent, ${failed} failed. Check row badges for details.`);
+            } else {
+                showStatus('success', `Send complete: ${sent} sent.`);
+            }
+        });
+
+        document.getElementById('smtpToggle').addEventListener('click', function () {
+            this.classList.toggle('open');
+            document.getElementById('smtpFields').classList.toggle('open');
+        });
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            showStatus('info', 'Use Preview Event Metadata, then Generate ZIP for Selected or Send All Selected.');
         });
 
         function showStatus(type, message) {

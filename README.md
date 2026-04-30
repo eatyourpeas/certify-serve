@@ -1,167 +1,195 @@
 # Certify Attendance Server
 
-FastAPI wrapper around the `certify-attendance` PyPI package to generate single or batch attendance certificates and optionally send them via SMTP.
+FastAPI wrapper around the `certify-attendance` package for generating attendance certificates (PDF), with:
 
-Quick start (local):
+- Single generation (`/generate`)
+- CSV batch generation (`/generate/csv`)
+- Eventbrite-driven generation and sending (`/generate/eventbrite`)
+- Browser UI at `/` for previewing attendees, selecting recipients, generating ZIPs, and sending emails
 
-1. Build the image:
+## Quick Start
 
-```bash
-docker build -t certify-server .
-```
+### 1. Configure environment
 
-2. Run the container exposing port 8000:
-
-```bash
-docker run -p 8000:8000 certify-server
-```
-
-Endpoints:
-
-- `POST /generate` (multipart/form-data) - single attendee. Fields: `first_name`, `surname`, `email`, `conference_title`, `conference_date`. Optional `logo` file, `review` (bool), `send` (bool), SMTP settings when `send=true`.
-- `POST /generate/csv` (multipart/form-data) - CSV upload with attendee rows. CSV headers will be lower-cased and must include columns with `first` (first name), `surname` or `last` (surname), and `email`.
-- `POST /generate/eventbrite` (multipart/form-data) - Eventbrite integration. Fields: `event_id`, `eventbrite_token`, `review` (bool, default `true`). Fetches all attendees from Eventbrite and generates certificates automatically.
-
-Responses:
-
-- If `review=true` (default), endpoints return a ZIP of generated PDFs for review.
-- If `send=true`, the server will send emails (SMTP) with personalized PDF attachments.
-
-Notes:
-
-- The server attempts to locate a generator callable inside the `certify_attendance` package. If your package exposes a different API, you may need to adapt `src/certify_server/main.py` to call the correct function/class.
-
-## Eventbrite Integration
-
-### Prerequisites
-
-1. **Eventbrite API Token**: Obtain from [Eventbrite Developer Portal](https://www.eventbrite.com/platform/api)
-2. **Event ID**: Found in your Eventbrite event URL or dashboard
-3. Set `EVENTBRITE_TOKEN` in your `.env` file
-
-### Usage Example (Dry Run)
-
-To generate certificates for all attendees without sending emails:
+Copy the committed example template and fill values:
 
 ```bash
-# Source .env to load EVENTBRITE_TOKEN
-set -a; source .env; set +a
-
-# Generate certificates as ZIP (review mode, no emails sent)
-curl -X POST "http://localhost:8000/generate/eventbrite" \
-  -F "event_id=1984053600729" \
-  -F "eventbrite_token=$EVENTBRITE_TOKEN" \
-  -F "review=true"
+cp example.env .env
 ```
 
-This will:
-- Fetch event details (title, date) from Eventbrite
-- Retrieve all attendees from the event
-- Generate a PDF certificate for each attendee
-- Return a ZIP file containing all certificates for download
-- **Not send any emails** (default behavior)
-
-### Workflow
-
-1. Server fetches event details from Eventbrite API
-2. Server retrieves all attendees from the event
-3. For each attendee, extracts: first name, last name, email
-4. Generates PDF certificates using the `certify_attendance` package
-5. Returns ZIP file (if `review=true`) or status count (if `review=false`)
-
-### Data Mapping
-
-| Eventbrite Field | Certificate Field |
-|------------------|-----------------|
-| `name.text` | Conference title |
-| `start.local` | Event date |
-| `profile.first_name` | Attendee first name |
-| `profile.last_name` | Attendee surname |
-| `profile.email` | Attendee email |
-
-### Sending Emails
-
-To send certificates via email, add `send=true` and SMTP configuration fields:
+### 2. Run with Docker
 
 ```bash
-curl -X POST "http://localhost:8000/generate/eventbrite" \
-  -F "event_id=1984053600729" \
-  -F "eventbrite_token=$EVENTBRITE_TOKEN" \
-  -F "send=true" \
-  -F "smtp_host=smtp.example.com" \
-  -F "smtp_port=587" \
-  -F "smtp_username=apikey" \
-  -F "smtp_password=your_smtp_password" \
-  -F "from_name=Conference Team" \
-  -F "from_email=noreply@example.com" \
-  -F "subject=Your attendance certificate" \
-  -F "body=Thank you for attending. Please find your certificate attached."
+docker compose up --build
 ```
 
-**Email Fields:**
+Then open:
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `smtp_host` | required when `send=true` | SMTP server hostname (e.g., `smtp.gmail.com`) |
-| `smtp_port` | required when `send=true` | SMTP port (e.g., `587` for STARTTLS, `465` for SSL) |
-| `smtp_username` | required when `send=true` | SMTP username or API key |
-| `smtp_password` | required when `send=true` | SMTP password or API secret |
-| `from_name` | `Conference Team` | Sender name displayed to recipients |
-| `from_email` | `noreply@example.com` | Sender email address |
-| `subject` | `Your attendance certificate` | Email subject line |
-| `body` | `Please find your attendance certificate attached.` | Email body text |
+- UI: `http://localhost:8000/`
+- Swagger: `http://localhost:8000/swagger`
 
-**Console Debug Mode:**
+## Self-Hosting Environment Variables
 
-Set `SMTP_BACKEND=console` in your `.env` file to log emails to stdout instead of sending them:
+`example.env` includes the variables expected by the app.
 
-```bash
-export SMTP_BACKEND=console
-# Emails will be printed to terminal for review
-```
+### Required for Eventbrite workflow
 
-### Cherry-Picking Attendees
+- `EVENTBRITE_TOKEN`
 
-By default, the endpoint generates certificates for **all registered attendees**. To generate certificates only for attendees who actually attended, you can filter by attendee status.
+### Required for email sending (when `send=true`)
 
-**Eventbrite Attendee Status Values:**
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
 
-| Status | Description |
-|--------|-------------|
-| `attended` | Attendee actually attended the event |
-| `registered` | Attendee registered but may not have attended |
-| `declined` | Attendee declined the invitation |
-| `waitlisted` | Attendee is on the waitlist |
+### Recommended sender defaults
 
-**Filtering by Status:**
+- `FROM_NAME` (default: `Conference Team`)
+- `FROM_EMAIL` (default: `noreply@example.com`)
 
-The Eventbrite API supports filtering attendees by status. To cherry-pick only attendees who attended:
+### Optional
 
-```bash
-curl -X POST "http://localhost:8000/generate/eventbrite" \
-  -F "event_id=1984053600729" \
-  -F "eventbrite_token=$EVENTBRITE_TOKEN" \
-  -F "review=true" \
-  -F "status=attended"
-```
+- `SMTP_BACKEND=console` to print emails to logs instead of sending
 
-**Available Status Filters:**
+## Frontend Workflow (Current UI)
 
-- `attended` - Only attendees who actually attended
-- `registered` - All registered attendees (default, no filter)
-- `declined` - Attendees who declined
-- `waitlisted` - Attendees on the waitlist
+The homepage now uses a 3-card form:
 
-**Implementation:**
+1. Eventbrite Credentials
+2. Certificate Details
+3. Email Details
 
-The server now supports the `status` form parameter. When provided, it passes the filter to the Eventbrite API:
+Follow this flow:
 
-```python
-# In generate_eventbrite endpoint:
-params = {}
-if status:
-    params["status"] = status
-att = await client.get(base + "/attendees/", params=params)
-```
+1. Enter `event_id`
+2. Leave Eventbrite API token blank to use server `EVENTBRITE_TOKEN`, or provide one to override
+3. Click **Preview Event Metadata**
+4. Review/override title, date, subtitle, location, logo
+5. Review attendees table (sorted by surname, paginated 15 per page)
+6. Select attendees via checkboxes
+7. Choose:
+   - **Generate ZIP for Selected**
+   - **Send All Selected**
 
-Alternatively, you can use the `/generate/csv` endpoint with a pre-filtered CSV of attendees who attended.
+Delivery status is shown per row (`sending`, `sent`, `failed`).
+
+## Env Defaults vs UI Overrides
+
+### Eventbrite token
+
+- Server fallback: `EVENTBRITE_TOKEN`
+- UI override: Eventbrite API token field in the form
+- If UI token is blank, backend uses env token
+
+### SMTP credentials
+
+- Server fallback: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`
+- UI override: Email card -> **Override SMTP server settings** (collapsible section)
+- Only non-empty override fields are sent; blanks continue to use server env values
+
+## API Endpoints
+
+### `POST /generate`
+
+Generate one certificate.
+
+Required form fields:
+
+- `first_name`
+- `surname`
+- `email`
+- `conference_title`
+- `conference_date`
+
+Optional:
+
+- `subtitle`
+- `location`
+- `logo` (file)
+- `review` (default `true`)
+- `send` (default `false`)
+- SMTP fields and email fields when sending
+
+Behavior:
+
+- `review=true`: returns ZIP with certificate PDF
+- `send=true`: sends email and returns JSON
+
+### `POST /generate/csv`
+
+Generate certificates from CSV.
+
+Required:
+
+- `csv_file`
+- `conference_title`
+- `conference_date`
+
+Optional:
+
+- `subtitle`, `location`, `logo`, `review`, `send`
+- SMTP and email fields when sending
+
+### `GET|POST /generate/eventbrite/preview`
+
+Fetches Eventbrite event metadata to prefill certificate fields.
+
+Required:
+
+- `event_id`
+- Eventbrite token via field or server env
+
+Returns metadata such as title/date/subtitle/location.
+
+### `GET|POST /generate/eventbrite/attendees`
+
+Fetch attendees for an Eventbrite event.
+
+Inputs:
+
+- `event_id`
+- Eventbrite token via field or server env
+- Optional `status` filter: `attended`, `registered`, `declined`, `waitlisted`
+
+Returns attendee list with profile fields used by the UI.
+
+### `POST /generate/eventbrite`
+
+Generate certificates (ZIP or send emails) from Eventbrite attendees.
+
+Required:
+
+- `event_id`
+- Eventbrite token via field or server env
+
+Optional:
+
+- `conference_title`, `conference_date`, `subtitle`, `location`
+- `logo` file
+- `selected_emails` (JSON array of emails) to process a subset
+- `review` (`true` -> ZIP)
+- `send` (`true` -> SMTP delivery)
+- `status` attendee filter
+- `greeting_type`: `simple`, `title_and_full_name`, `personalized`
+- SMTP and email fields
+
+Send response includes partial-failure reporting:
+
+- `status`: `sent` or `partial`
+- `count`: sent count
+- `total`: attempted count
+- `failures`: list of `{email, error}`
+
+## Eventbrite Metadata Mapping
+
+- `name.text` -> `conference_title`
+- `start.local` -> `conference_date`
+- `summary` or `description.text` -> `subtitle`
+- venue address/summary -> `location`
+
+## Notes
+
+- The app supports both `certify_attendance` and compatible `certify` module shapes.
+- If no custom logo is uploaded, generator defaults are used.
+- For local diagnosis of email sending, set `SMTP_BACKEND=console`.
