@@ -7,6 +7,8 @@ FastAPI wrapper around the `certify-attendance` package for generating attendanc
 - Eventbrite-driven generation and sending (`/generate/eventbrite`)
 - Browser UI at `/` for previewing attendees, selecting recipients, generating ZIPs, and sending emails
 
+![App screenshot](certify-serve.png)
+
 ## Quick Start
 
 ### 1. Configure environment
